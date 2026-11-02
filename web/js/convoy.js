@@ -2,7 +2,8 @@
 import { RouteView } from './route.js';
 
 // No amber/orange (freeways) and no red (our own route).
-const COLORS = ['#b07cff', '#2ed3b7', '#ff5fa2', '#9bd43a', '#f2f2f2', '#00d0ff'];
+// Nor blue/cyan (our own truck and trail).
+const COLORS = ['#b07cff', '#2ed3b7', '#ff5fa2', '#9bd43a', '#f2f2f2'];
 const DELAY = 650; // ms behind real time, peers send every 500 ms
 
 export function colorFor(id) {

@@ -301,15 +301,22 @@ function fitOverview() {
     const b = store.meta.bounds;
     pts.push([b[0], b[1]], [b[2], b[3]]);
   }
+  // Friends too, so the whole convoy fits.
+  for (const p of peers) pts.push([p.x, p.y]);
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   setFollow(false);
+  computeInsets();
+  // Fit into the part of the screen not covered by the HUD.
+  const ins = view.insets;
+  const freeW = Math.max(120, view.w - ins.left - ins.right), freeH = Math.max(120, view.h - ins.top - ins.bottom);
   view.rot = 0;
-  view.ax = 0.5; view.ay = 0.5;
+  view.ax = (ins.left + freeW / 2) / view.w;
+  view.ay = (ins.top + freeH / 2) / view.h;
   view.cx = (Math.min(...xs) + Math.max(...xs)) / 2;
   view.cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-  const w = Math.max(500, Math.max(...xs) - Math.min(...xs)) * 1.25;
-  const h = Math.max(500, Math.max(...ys) - Math.min(...ys)) * 1.25;
-  view.scale = clampScale(Math.min((view.w - 40) / w, (view.h - 260) / h));
+  const w = Math.max(500, Math.max(...xs) - Math.min(...xs)) * 1.15;
+  const h = Math.max(500, Math.max(...ys) - Math.min(...ys)) * 1.15;
+  view.scale = clampScale(Math.min(freeW / w, freeH / h));
   dirty = true;
 }
 
@@ -510,8 +517,27 @@ function resize() {
   const [w, h] = renderer.resize();
   view.w = w;
   view.h = h;
+  computeInsets();
   dirty = true;
 }
+
+// Part of the screen not covered by the HUD, where edge arrows go.
+function computeInsets() {
+  const rect = (id) => { const el = $(id); return el && !el.classList.contains('hidden') ? el.getBoundingClientRect() : null; };
+  const job = rect('job'), ctl = rect('controls'), spd = rect('speed'), info = rect('info');
+  const pad = 30;
+  const ins = { left: pad, top: pad, right: pad, bottom: pad };
+  if (ctl) ins.right = view.w - ctl.left + pad;
+  if (view.w > view.h * 1.2) {
+    if (job) ins.left = job.right + pad;
+    if (info) ins.bottom = view.h - info.top + pad;
+  } else {
+    if (job) ins.top = job.bottom + pad;
+    if (spd) ins.bottom = view.h - spd.top + pad;
+  }
+  view.insets = ins;
+}
+setInterval(computeInsets, 500);
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 

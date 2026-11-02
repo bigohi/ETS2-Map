@@ -85,6 +85,7 @@
   <dialog id="settings">
     <form method="dialog">
       <h2>Réglages</h2>
+      <div class="opts">
       <label><input type="checkbox" id="set-route" checked> Itinéraire en rouge</label>
       <label><input type="checkbox" id="set-peer-routes" checked> Itinéraires des potes (pointillés)</label>
       <label><input type="checkbox" id="set-night" checked> Thème nuit</label>
@@ -94,6 +95,7 @@
       <label><input type="checkbox" id="set-trail" checked> Trace parcourue</label>
       <label><input type="checkbox" id="set-autozoom" checked> Zoom selon la vitesse</label>
       <label><input type="checkbox" id="set-awake" checked> Garder l'écran allumé</label>
+      </div>
       <div class="row">
         <button type="button" id="btn-fullscreen">Plein écran</button>
         <button type="button" id="btn-clear-trail">Effacer la trace</button>
@@ -111,6 +113,8 @@
   <dialog id="convoy-sheet">
     <form method="dialog">
       <h2>Convoi</h2>
+      <div class="convoy-grid">
+      <div class="convoy-form">
       <div class="field"><span>Ton pseudo</span><input id="convoy-name" maxlength="24" autocomplete="off" placeholder="Quentin"></div>
       <div class="field"><span>Code du convoi</span><input id="convoy-room" maxlength="64" autocomplete="off" autocapitalize="none" placeholder="ex. convoi-du-samedi"></div>
       <div class="row">
@@ -118,7 +122,9 @@
         <button type="button" id="convoy-leave" class="hidden">Quitter</button>
       </div>
       <p class="about" id="convoy-msg"></p>
+      </div>
       <ul id="convoy-list"></ul>
+      </div>
       <button value="close">Fermer</button>
     </form>
   </dialog>

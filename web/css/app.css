@@ -221,3 +221,13 @@ dialog#convoy-sheet {
 #convoy-list .who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 #convoy-list .who small { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #convoy-list .num { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Landscape phones: wide dialogs in two columns instead of a tall scroll. */
+@media (orientation: landscape) and (max-height: 520px) {
+  dialog#settings, dialog#convoy-sheet { width: min(94vw, 760px); max-height: 92vh; padding: 14px 18px; }
+  dialog h2 { margin-bottom: 6px; }
+  dialog#settings .opts { columns: 2; column-gap: 24px; }
+  dialog#settings label { padding: 6px 0; break-inside: avoid; }
+  .convoy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; align-items: start; }
+  #convoy-list { margin-top: 8px; max-height: 52vh; overflow-y: auto; }
+}

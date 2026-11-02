@@ -521,12 +521,16 @@ export class Renderer {
   drawEdgeArrow(view, dest, truck, color, name) {
     const { ctx, theme } = this;
     const [dx, dy] = view.toScreen(dest[0], dest[1]);
-    const m = 34;
-    if (dx >= m && dy >= m + 120 && dx <= view.w - m && dy <= view.h - m - 60) return;
-    const [tx, ty] = view.toScreen(truck.x, truck.y);
+    // Free map area between the HUD panels (computed by the app from the layout).
+    const ins = view.insets ?? { left: 34, top: 184, right: 94, bottom: 144 };
+    const left = ins.left, right = view.w - ins.right, top = ins.top, bottom = view.h - ins.bottom;
+    // Only for targets really off screen.
+    if (dx >= 20 && dy >= 20 && dx <= view.w - 20 && dy <= view.h - 20) return;
+    // From the truck, or from the middle of the free area if the truck is off it.
+    let [tx, ty] = view.toScreen(truck.x, truck.y);
+    if (!(tx >= left && tx <= right && ty >= top && ty <= bottom)) { tx = (left + right) / 2; ty = (top + bottom) / 2; }
     const ang = Math.atan2(dy - ty, dx - tx);
-    // Intersect ray from truck with the inset screen rectangle.
-    const left = m, right = view.w - m - 60, top = m + 150, bottom = view.h - m - 110;
+    // Intersect ray from truck with the free area.
     const c = Math.cos(ang), s = Math.sin(ang);
     let t = Infinity;
     if (c > 0) t = Math.min(t, (right - tx) / c);
