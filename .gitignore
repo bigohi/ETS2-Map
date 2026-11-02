@@ -3,3 +3,4 @@ vendor/
 data/
 plugin/build/
 *.log
+dist/

@@ -20,6 +20,7 @@ export const THEMES = {
     trail: 'rgba(63,169,255,0.55)',
     truck: '#3fa9ff', truckEdge: '#ffffff',
     dest: '#ff5a52', source: '#7bd88f',
+    route: '#e8322b', routeEdge: '#6e1310',
     poiHalo: 'rgba(20,23,27,0.85)',
   },
   light: {
@@ -40,6 +41,7 @@ export const THEMES = {
     trail: 'rgba(10,124,255,0.5)',
     truck: '#0a7cff', truckEdge: '#ffffff',
     dest: '#d93025', source: '#188038',
+    route: '#e8322b', routeEdge: '#9c1b16',
     poiHalo: 'rgba(255,255,255,0.9)',
   },
 };
@@ -132,6 +134,36 @@ export class Renderer {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
+    // Friends' routes (dashed, their color), under ours.
+    if (scene.opts.peerRoutes && scene.peers?.length) {
+      const w = Math.max(4 * q, px(3.5));
+      for (const peer of scene.peers) {
+        if (!peer.route?.active) continue;
+        const paths = peer.route.path(q);
+        // Dark underlay so the dashes read on top of amber highways.
+        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(10,12,16,0.7)';
+        ctx.lineWidth = w + px(3);
+        for (const p of paths) if (p) ctx.stroke(p);
+        ctx.setLineDash([px(10), px(6)]);
+        ctx.strokeStyle = peer.color;
+        ctx.lineWidth = w;
+        for (const p of paths) if (p) ctx.stroke(p);
+      }
+      ctx.setLineDash([]);
+    }
+
+    // GPS route, on the road, under the trail and markers.
+    if (scene.route?.active) {
+      const paths = scene.route.path(q);
+      const w = Math.max(7 * q, px(5));
+      for (const [color, width] of [[theme.routeEdge, w + px(2.5)], [theme.route, w]]) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        for (const p of paths) if (p) ctx.stroke(p);
+      }
+    }
+
     // Trail.
     if (scene.opts.trail && scene.trail.length > 1) {
       ctx.beginPath();
@@ -144,7 +176,7 @@ export class Renderer {
     }
 
     // Straight guide line truck -> destination when zoomed out.
-    if (scene.truck && scene.dest && view.scale < 0.08) {
+    if (scene.truck && scene.dest && view.scale < 0.08 && !scene.route?.active) {
       ctx.beginPath();
       ctx.moveTo(scene.truck.x * q, scene.truck.y * q);
       ctx.lineTo(scene.dest[0] * q, scene.dest[1] * q);
@@ -164,8 +196,11 @@ export class Renderer {
     this.drawLabels(view, placed);
     if (scene.source) this.drawPin(view, scene.source, theme.source, false);
     if (scene.dest) this.drawPin(view, scene.dest, theme.dest, true);
+    for (const peer of scene.peers ?? []) this.drawPeer(view, peer);
     if (scene.truck) this.drawTruck(view, scene.truck);
-    if (scene.dest && scene.truck) this.drawEdgeArrow(view, scene.dest, scene.truck);
+    if (scene.dest && scene.truck) this.drawEdgeArrow(view, scene.dest, scene.truck, theme.dest, null);
+    const me = scene.truck ?? { x: view.cx, y: view.cy };
+    for (const peer of scene.peers ?? []) this.drawEdgeArrow(view, [peer.x, peer.y], me, peer.color, peer.name);
   }
 
   worldTransform(ctx, view, offX = 0, offY = 0) {
@@ -419,6 +454,40 @@ export class Renderer {
     ctx.restore();
   }
 
+  drawPeer(view, peer) {
+    const { ctx } = this;
+    const [x, y] = view.toScreen(peer.x, peer.y);
+    if (x < -60 || y < -40 || x > view.w + 60 || y > view.h + 40) return;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.save();
+    ctx.rotate(view.rot - peer.h * Math.PI * 2);
+    ctx.beginPath();
+    ctx.moveTo(0, -14);
+    ctx.lineTo(10, 11);
+    ctx.lineTo(0, 5);
+    ctx.lineTo(-10, 11);
+    ctx.closePath();
+    ctx.fillStyle = peer.color;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2.2;
+    ctx.lineJoin = 'round';
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    // Name tag under the arrow, always upright.
+    ctx.font = '700 12px system-ui, sans-serif';
+    const w = ctx.measureText(peer.name).width + 12;
+    ctx.fillStyle = peer.color;
+    roundRect(ctx, -w / 2, 17, w, 18, 9);
+    ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(peer.name, 0, 26.5);
+    ctx.restore();
+  }
+
   drawTruck(view, truck) {
     const { ctx, theme } = this;
     const [x, y] = view.toScreen(truck.x, truck.y);
@@ -448,8 +517,8 @@ export class Renderer {
     ctx.restore();
   }
 
-  // Arrow at the screen edge pointing to an off-screen destination.
-  drawEdgeArrow(view, dest, truck) {
+  // Arrow at the screen edge pointing to something off screen (destination, friend).
+  drawEdgeArrow(view, dest, truck, color, name) {
     const { ctx, theme } = this;
     const [dx, dy] = view.toScreen(dest[0], dest[1]);
     const m = 34;
@@ -476,7 +545,7 @@ export class Renderer {
     ctx.lineTo(-4, 0);
     ctx.lineTo(-8, 10);
     ctx.closePath();
-    ctx.fillStyle = theme.dest;
+    ctx.fillStyle = color;
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
     ctx.fill();
@@ -485,14 +554,25 @@ export class Renderer {
     ctx.font = '700 12px system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    const label = `${distKm < 10 ? distKm.toFixed(1) : Math.round(distKm)} km`;
+    const km = `${distKm < 10 ? distKm.toFixed(1) : Math.round(distKm)} km`;
+    const label = name ? `${name} · ${km}` : km;
     const lx = ex - c * 30, ly = ey - s * 22;
     ctx.strokeStyle = theme.labelHalo;
     ctx.lineWidth = 3.5;
     ctx.strokeText(label, lx, ly);
-    ctx.fillStyle = theme.dest;
+    ctx.fillStyle = color;
     ctx.fillText(label, lx, ly);
   }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 function collides(placed, b) {

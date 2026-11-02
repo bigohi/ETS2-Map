@@ -1,7 +1,8 @@
-// Map pipeline: setup | parse | bake | all
+// Map pipeline: setup | parse | bake | route | all
 //   setup  clone TruckSim Maps (pinned), apply our fixes, npm install, build its native addon
 //   parse  read the game's .scs files -> data/parsed/*.json (+ icons)
 //   bake   data/parsed -> data/map (tiles for the phone)
+//   route  data/parsed -> data/map/route.* (road graph for GPS routes)
 // Re-run "all" after a game update.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -57,10 +58,15 @@ function bake() {
   run(process.execPath, [HEAP, TSX, path.join(ROOT, 'tools', 'map', 'bake.ts'), '--game', gameDir()], { cwd: ROOT });
 }
 
+function route() {
+  run(process.execPath, [HEAP, TSX, path.join(ROOT, 'tools', 'map', 'bake-route.ts'), '--game', gameDir()], { cwd: ROOT });
+}
+
 const step = process.argv[2] ?? 'all';
 if (!fs.existsSync(TSX) && step !== 'setup') setup();
 if (step === 'setup') setup();
 else if (step === 'parse') parse();
 else if (step === 'bake') bake();
-else if (step === 'all') { parse(); bake(); }
-else { console.error('usage: node tools/map/pipeline.mjs setup|parse|bake|all'); process.exit(1); }
+else if (step === 'route') route();
+else if (step === 'all') { parse(); bake(); route(); }
+else { console.error('usage: node tools/map/pipeline.mjs setup|parse|bake|route|all'); process.exit(1); }

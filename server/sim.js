@@ -3,12 +3,13 @@
 // the baked map and sends the same UDP datagrams as the game plugin.
 // Lets you test the phone app without launching the game.
 //
-// Usage: node server/sim.js [--from calais] [--km 120] [--speed 85] [--port 30210]
+// Usage: node server/sim.js [--from calais] [--to lyon [--company <token>]] [--km 120] [--speed 85] [--port 30210]
 
 import dgram from 'node:dgram';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Router } from './route.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MAP_DIR = path.join(ROOT, 'data', 'map');
@@ -17,6 +18,8 @@ const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith('--') ? [...acc, [a.slice(2), all[i + 1] && !all[i + 1].startsWith('--') ? all[i + 1] : true]] : acc), []),
 );
 const FROM = String(args.from ?? 'calais');
+const TO = args.to ? String(args.to) : null;
+const NAME = String(args.name ?? 'S (simulateur)');
 const MAX_KM = Number(args.km ?? 120);
 const CRUISE_KMH = Number(args.speed ?? 85);
 const PORT = Number(args.port ?? process.env.ETS2MAP_PORT ?? 30210);
@@ -112,23 +115,40 @@ function chain(first, reverse) {
   return { route, length };
 }
 
-const { route, length } = buildRoute();
+// With --to <city>, drive the real GPS route (same router as the server) to a
+// company in that city; otherwise chain highways from --from.
+let route, length, dstCity, dstCo;
+const router = TO ? Router.load(MAP_DIR) : null;
+if (router) {
+  const [cx, cy] = meta.cityPos[FROM];
+  const s0 = router.snap(cx, cy, null, 3000);
+  const g0 = router.geomOff[s0.edge];
+  const ax = router.pts[g0 * 2] / Q, ay = router.pts[g0 * 2 + 1] / Q, bx = router.pts[g0 * 2 + 2] / Q, by = router.pts[g0 * 2 + 3] / Q;
+  const h0 = ((Math.atan2(-(bx - ax), -(by - ay)) / (Math.PI * 2)) + 1) % 1;
+  dstCity = TO;
+  dstCo = String(args.company ?? Object.keys(router.companies).find((k) => k.startsWith(TO + '/'))?.split('/')[1] ?? '');
+  const target = router.jobTargets(dstCity, dstCo, meta.cityPos[dstCity]);
+  const r = target && router.route((ax + bx) / 2, (ay + by) / 2, h0, target);
+  if (!r) throw new Error(`no route from ${FROM} to ${TO}`);
+  route = r.points;
+  length = r.distance;
+} else {
+  ({ route, length } = buildRoute());
+  // Destination: city closest to the route end, with one of its companies.
+  const endPt = route[route.length - 1];
+  let dd = Infinity;
+  for (const [token, pos] of Object.entries(meta.cityPos)) {
+    const d = (pos[0] - endPt[0]) ** 2 + (pos[1] - endPt[1]) ** 2;
+    if (d < dd && meta.companies[token]) { dd = d; dstCity = token; }
+  }
+  dstCo = Object.keys(meta.companies[dstCity] ?? {})[0] ?? '';
+}
 // Cumulative distances.
 const cum = [0];
 for (let i = 1; i < route.length; i++) cum.push(cum[i - 1] + Math.hypot(route[i][0] - route[i - 1][0], route[i][1] - route[i - 1][1]));
-
-// Destination: city closest to the route end, with one of its companies.
-const endPt = route[route.length - 1];
-let dstCity = null, dd = Infinity;
-for (const [token, pos] of Object.entries(meta.cityPos)) {
-  const d = (pos[0] - endPt[0]) ** 2 + (pos[1] - endPt[1]) ** 2;
-  if (d < dd && meta.companies[token]) { dd = d; dstCity = token; }
-}
-const dstCo = Object.keys(meta.companies[dstCity] ?? {})[0] ?? '';
 const srcCo = Object.keys(meta.companies[FROM] ?? {})[0] ?? '';
-console.log(`Route: ${meta.cityNames[FROM] ?? FROM} -> ${meta.cityNames[dstCity] ?? dstCity} (${dstCo}), ${(length / 1000).toFixed(1)} km of highway, ${route.length} points`);
+console.log(`Route: ${meta.cityNames[FROM] ?? FROM} -> ${meta.cityNames[dstCity] ?? dstCity} (${dstCo}), ${(length / 1000).toFixed(1)} km, ${route.length} points${router ? ' (GPS route)' : ' (highway chain)'}`);
 
-// ---------------------------------------------------------------------------
 // Drive.
 
 function posAt(s) {
@@ -174,7 +194,7 @@ setInterval(() => {
     spd: v, cc: v > 20 ? CRUISE_KMH / 3.6 : 0, lim: 90 / 3.6,
     nd: remaining, nt: (remaining / 23) * 19, fuel, range: fuel / 0.32, gt: Math.floor(gt), rest: Math.max(0, 600 - Math.floor(gt - startGt)), scale: 19,
     gear: v > 1 ? 12 : 0, engine: true, pbrake: false, trailers: 1,
-    truck: { fuelCap: 900, brand: 'Scania', name: 'S (simulateur)' },
+    truck: { fuelCap: 900, brand: 'Scania', name: NAME },
     job: {
       mass: 21300, income, deliv: startGt + 60 * 9, km: Math.round(length / 1000 * 4.5), special: false,
       cargo: 'Pièces automobiles', cargoId: 'car_parts',

@@ -4,7 +4,8 @@
 //  - serves the phone web app (web/) and the baked map (data/map/)
 //  - pushes live telemetry to phones over Server-Sent Events (/api/stream)
 //
-// Usage: node server/server.js [--port 8080] [--udp 30210] [--record file.ndjson] [--replay file.ndjson]
+// Usage: node server/server.js [--port 8080] [--udp 30210] [--convoy <room> --name <name>]
+//                              [--record file.ndjson] [--replay file.ndjson] [--config data/config.json]
 
 import http from 'node:http';
 import dgram from 'node:dgram';
@@ -13,6 +14,8 @@ import path from 'node:path';
 import os from 'node:os';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import { Router, RouteManager } from './route.js';
+import { ConvoyHub } from './convoy-hub.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIR = path.join(ROOT, 'web');
@@ -52,6 +55,44 @@ if (args.record) {
   console.log(`Recording telemetry to ${args.record}`);
 }
 
+// ---------------------------------------------------------------------------
+// GPS route (computed here: the game does not share its own).
+
+let routeRaw = null;        // last 'route' event payload (JSON text)
+let routes = null;
+let onRouteChange = null;   // set by the convoy to share the route
+try {
+  const router = Router.load(MAP_DIR);
+  if (router) {
+    const meta = JSON.parse(fs.readFileSync(path.join(MAP_DIR, 'meta.json'), 'utf8'));
+    routes = new RouteManager(router, meta, (route) => {
+      routeRaw = JSON.stringify(route);
+      broadcast('route', routeRaw);
+      onRouteChange?.(route);
+    });
+    console.log(`Road graph loaded: ${router.N} nodes, ${router.E} edges`);
+  } else {
+    console.log('No road graph (data/map/route.bin): run "npm run map:route" to get GPS routes.');
+  }
+} catch (err) {
+  console.error(`Road graph not loaded: ${err.message}`);
+}
+
+// ---------------------------------------------------------------------------
+// Convoy: friends' trucks through a public MQTT broker (encrypted per room).
+
+const convoy = new ConvoyHub({
+  configPath: path.resolve(ROOT, String(args.config ?? 'data/config.json')),
+  broadcast: (event, data) => broadcast(event, data),
+  brokers: args.broker ? String(args.broker).split(',') : undefined,
+});
+if (typeof args.convoy === 'string' || typeof args.name === 'string') {
+  convoy.configure({ room: typeof args.convoy === 'string' ? args.convoy : undefined, name: typeof args.name === 'string' ? args.name : undefined });
+} else if (convoy.config.room) {
+  convoy.restart();
+}
+onRouteChange = (route) => convoy.onRoute(route);
+
 function onTelemetry(text, source = 'udp') {
   let obj;
   try { obj = JSON.parse(text); } catch { return; }
@@ -63,6 +104,8 @@ function onTelemetry(text, source = 'udp') {
   packetCount++;
   if (recorder) recorder.write(JSON.stringify({ t: lastPacketAt, d: text }) + '\n');
   broadcast('t', latestRaw);
+  try { routes?.update(obj); } catch (err) { console.error(`[route] ${err.message}`); }
+  try { convoy.onTelemetry(obj); } catch (err) { console.error(`[convoy] ${err.message}`); }
 }
 
 function broadcast(event, data) {
@@ -176,6 +219,15 @@ function notFound(res) {
   res.end('Not found');
 }
 
+function readJson(req, limit = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (c) => { body += c; if (body.length > limit) { reject(new Error('too big')); req.destroy(); } });
+    req.on('end', () => { try { resolve(JSON.parse(body || '{}')); } catch (e) { reject(e); } });
+    req.on('error', reject);
+  });
+}
+
 function json(res, obj, code = 200) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(JSON.stringify(obj));
@@ -195,10 +247,28 @@ const server = http.createServer((req, res) => {
     res.write('retry: 1000\n\n');
     res.write(`event: status\ndata: ${JSON.stringify(status())}\n\n`);
     if (latestRaw) res.write(`event: t\ndata: ${latestRaw}\n\n`);
+    if (routeRaw) res.write(`event: route\ndata: ${routeRaw}\n\n`);
+    res.write(convoy.snapshot());
     clients.add(res);
     req.socket.setNoDelay(true);
     req.on('close', () => clients.delete(res));
     return;
+  }
+  if (p === '/api/route/target' && req.method === 'POST') {
+    return readJson(req).then((body) => {
+      if (!routes) return json(res, { ok: false, error: 'no road graph' }, 503);
+      if (body?.clear) routes.setManualTarget(null);
+      else if (Number.isFinite(body?.x) && Number.isFinite(body?.y)) routes.setManualTarget(body.x, body.y);
+      else return json(res, { ok: false, error: 'x, y or clear expected' }, 400);
+      if (latest) routes.update(latest);
+      json(res, { ok: true });
+    }, () => json(res, { ok: false, error: 'bad json' }, 400));
+  }
+  if (p === '/api/convoy') {
+    if (req.method === 'POST') {
+      return readJson(req).then((body) => json(res, convoy.configure(body ?? {})), () => json(res, { error: 'bad json' }, 400));
+    }
+    return json(res, { ...convoy.info(), list: [...convoy.peers.values()] });
   }
   if (p === '/api/state') return json(res, { status: status(), telemetry: latest });
   if (p === '/api/status') return json(res, status());

@@ -1,13 +1,15 @@
 // ETS2-Map phone app: live telemetry + map + HUD.
 import { MapStore } from './mapdata.js';
 import { Renderer, View, THEMES } from './renderer.js';
+import { RouteView } from './route.js';
+import { ConvoyView } from './convoy.js';
 
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------------------
 // Settings (persisted).
 
-const DEFAULTS = { night: true, pois: true, companies: true, shields: true, trail: true, autozoom: true, awake: true, headingUp: true, zoomBias: 0 };
+const DEFAULTS = { peerRoutes: true, route: true, night: true, pois: true, companies: true, shields: true, trail: true, autozoom: true, awake: true, headingUp: true, zoomBias: 0 };
 const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('ets2map.settings') || '{}') };
 const saveSettings = () => localStorage.setItem('ets2map.settings', JSON.stringify(settings));
 
@@ -18,6 +20,9 @@ const canvas = $('map');
 const store = new MapStore('map/');
 const renderer = new Renderer(canvas, store);
 const view = new View();
+const route = new RouteView();
+const convoy = new ConvoyView();
+let peers = [];   // friends' smoothed positions for the current frame
 let dirty = true;
 store.onTileLoaded = () => { dirty = true; };
 
@@ -41,6 +46,11 @@ const state = {
 function connect() {
   const es = new EventSource('api/stream');
   es.addEventListener('t', (e) => onTelemetry(JSON.parse(e.data)));
+  es.addEventListener('route', (e) => { route.set(JSON.parse(e.data)); if (state.truck) route.update(state.truck.x, state.truck.y); updateHud(); dirty = true; });
+  es.addEventListener('convoy', (e) => { convoy.info = JSON.parse(e.data); renderConvoy(); });
+  es.addEventListener('peer', (e) => { convoy.onPeer(JSON.parse(e.data)); scheduleConvoyRender(); });
+  es.addEventListener('peerroute', (e) => { const m = JSON.parse(e.data); convoy.onRoute(m.id, m.route); dirty = true; });
+  es.addEventListener('peerleave', (e) => { convoy.onLeave(JSON.parse(e.data).id); renderConvoy(); dirty = true; });
   es.addEventListener('status', (e) => { state.status = JSON.parse(e.data); state.lastStreamAt = performance.now(); updateBanner(); });
   es.onopen = () => { state.lastStreamAt = performance.now(); updateBanner(); };
   es.onerror = () => { state.status = { connected: false, serverDown: true }; updateBanner(); };
@@ -64,6 +74,7 @@ function onTelemetry(t) {
   state.samples.push(sample);
   if (state.samples.length > 20) state.samples.shift();
   addTrailPoint(sample.x, sample.y);
+  route.update(sample.x, sample.y);
   updateJob();
   updateHud();
   dirty = true;
@@ -157,7 +168,9 @@ function updateHud() {
 
   // Job / navigation card.
   const job = t.job;
-  const hasNav = t.nd > 1;
+  // Distance/time: the game's GPS when it has one, else our own route.
+  const ownRoute = route.active && !(t.nd > 1);
+  const hasNav = t.nd > 1 || ownRoute;
   $('job').classList.toggle('hidden', !job && !hasNav);
   if (job) {
     $('job-title').textContent = `${job.dst}${job.dstCo ? ' · ' + job.dstCo : ''}`;
@@ -167,12 +180,19 @@ function updateHud() {
     if (job.src) parts.push(`depuis ${job.src}`);
     $('job-sub').textContent = parts.filter(Boolean).join(' · ');
   } else {
-    $('job-title').textContent = 'Itinéraire GPS';
-    $('job-sub').textContent = '';
+    $('job-title').textContent = route.target?.label ?? 'Itinéraire GPS';
+    $('job-sub').textContent = ownRoute ? 'Itinéraire calculé par ETS2 Map' : '';
   }
-  $('nav-dist').textContent = hasNav ? fmtKm(t.nd) : '—';
-  $('nav-time').textContent = hasNav && t.nt > 0 ? fmtDur(t.nt / 60) : '—';
-  $('nav-eta').textContent = hasNav && t.nt > 0 && t.gt ? fmtClock(t.gt + t.nt / 60) : '—';
+  if (ownRoute) {
+    // Our estimate is in real driving time.
+    $('nav-dist').textContent = fmtKm(route.remaining());
+    $('nav-time').textContent = `≈ ${fmtDur(route.remainingDuration() / 60)}`;
+    $('nav-eta').textContent = '—';
+  } else {
+    $('nav-dist').textContent = hasNav ? fmtKm(t.nd) : '—';
+    $('nav-time').textContent = hasNav && t.nt > 0 ? fmtDur(t.nt / 60) : '—';
+    $('nav-eta').textContent = hasNav && t.nt > 0 && t.gt ? fmtClock(t.gt + t.nt / 60) : '—';
+  }
   const dl = $('deadline');
   if (job && job.deliv && t.gt && job.deliv < 0xfffffff0) {
     const left = job.deliv - t.gt;
@@ -219,7 +239,9 @@ let lastFrame = performance.now();
 function updateCamera(now) {
   const dt = Math.min(0.1, (now - lastFrame) / 1000);
   lastFrame = now;
-  const truck = state.truck;
+  // Following a friend from the convoy list, else our own truck.
+  const followed = state.followPeer ? peers.find((p) => p.id === state.followPeer) : null;
+  const truck = followed ?? state.truck;
   if (state.follow && truck) {
     view.cx = truck.x;
     view.cy = truck.y;
@@ -249,6 +271,7 @@ function approachAngle(cur, target, dt, speed) {
 
 function setFollow(on) {
   state.follow = on;
+  if (!on) state.followPeer = null;
   $('btn-recenter').classList.toggle('hidden', on);
   if (on) state.smoothScale = view.scale;
   dirty = true;
@@ -295,11 +318,49 @@ function fitOverview() {
 
 const pointers = new Map();
 let gesture = null;
+let pressTimer = 0;
 canvas.addEventListener('pointerdown', (e) => {
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, [e.clientX, e.clientY]);
   startGesture();
+  clearTimeout(pressTimer);
+  if (pointers.size === 1) {
+    const [px, py] = [e.clientX, e.clientY];
+    pressTimer = setTimeout(() => {
+      if (pointers.size === 1 && gesture && !gesture.moved) {
+        gesture.moved = true; // not a tap
+        setDestination(...view.toWorld(px, py));
+      }
+    }, 600);
+  }
 });
+canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); setDestination(...view.toWorld(e.clientX, e.clientY)); });
+
+async function setDestination(x, y) {
+  navigator.vibrate?.(30);
+  toast('Itinéraire vers ce point…', 'Annuler', clearDestination);
+  try {
+    const r = await fetch('api/route/target', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x, y }) });
+    if (!r.ok) toast((await r.json()).error === 'no road graph' ? 'Graphe routier absent (npm run map:route)' : 'Itinéraire impossible');
+  } catch { toast('Serveur injoignable'); }
+}
+async function clearDestination() {
+  await fetch('api/route/target', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }) }).catch(() => {});
+  toast('Destination effacée');
+}
+
+let toastTimer = 0;
+function toast(text, action, onAction) {
+  const el = $('toast');
+  el.querySelector('span').textContent = text;
+  const btn = el.querySelector('button');
+  btn.classList.toggle('hidden', !action);
+  btn.textContent = action ?? '';
+  btn.onclick = () => { el.classList.add('hidden'); onAction?.(); };
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 4000);
+}
 canvas.addEventListener('pointermove', (e) => {
   if (!pointers.has(e.pointerId)) return;
   pointers.set(e.pointerId, [e.clientX, e.clientY]);
@@ -338,6 +399,7 @@ canvas.addEventListener('pointermove', (e) => {
   }
 });
 const endPointer = (e) => {
+  clearTimeout(pressTimer);
   pointers.delete(e.pointerId);
   if (gesture && !gesture.moved && gesture.n === 1 && pointers.size === 0) {
     const now = performance.now();
@@ -377,8 +439,9 @@ $('btn-rotate').onclick = () => {
   dirty = true;
 };
 $('btn-fit').onclick = () => fitOverview();
-$('btn-recenter').onclick = () => setFollow(true);
+$('btn-recenter').onclick = () => { state.followPeer = null; setFollow(true); };
 $('btn-menu').onclick = () => $('settings').showModal();
+$('btn-clear-dest').onclick = () => { clearDestination(); $('settings').close(); };
 $('btn-clear-trail').onclick = () => { state.trail = []; sessionStorage.removeItem('ets2map.trail'); dirty = true; };
 $('btn-fullscreen').onclick = () => {
   const el = document.documentElement;
@@ -386,7 +449,7 @@ $('btn-fullscreen').onclick = () => {
   else (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el, { navigationUI: 'hide' });
 };
 
-const toggles = { 'set-night': 'night', 'set-pois': 'pois', 'set-companies': 'companies', 'set-shields': 'shields', 'set-trail': 'trail', 'set-autozoom': 'autozoom', 'set-awake': 'awake' };
+const toggles = { 'set-peer-routes': 'peerRoutes', 'set-route': 'route', 'set-night': 'night', 'set-pois': 'pois', 'set-companies': 'companies', 'set-shields': 'shields', 'set-trail': 'trail', 'set-autozoom': 'autozoom', 'set-awake': 'awake' };
 for (const [id, key] of Object.entries(toggles)) {
   const el = $(id);
   el.checked = !!settings[key];
@@ -454,13 +517,16 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 
 function frame(now) {
   state.truck = interpolatedTruck(now);
-  const moving = state.samples.length && !state.telemetry?.paused;
+  peers = convoy.positions(now);
+  const moving = (state.samples.length && !state.telemetry?.paused) || peers.length > 0;
   updateCamera(now);
   if (dirty || moving || gesture || renderer.needsRedraw) {
     renderer.draw(view, {
       truck: state.truck,
       trail: state.trail,
-      dest: state.dest,
+      dest: route.target ? [route.target.x, route.target.y] : state.dest,
+      route: settings.route ? route : null,
+      peers,
       source: state.source,
       opts: settings,
     });
@@ -491,4 +557,75 @@ async function start() {
 start();
 
 // Debug hook for automated checks.
-window.__ets2map = { state, view, settings, store, renderer };
+// ---------------------------------------------------------------------------
+// Convoy sheet.
+
+const meName = () => convoy.info.name || 'Moi';
+$('btn-convoy').onclick = () => { renderConvoy(); $('convoy-sheet').showModal(); };
+$('convoy-join').onclick = async () => {
+  const name = $('convoy-name').value.trim();
+  const room = $('convoy-room').value.trim();
+  if (!name || !room) { $('convoy-msg').textContent = 'Indique ton pseudo et le code du convoi.'; return; }
+  await postConvoy({ name, room });
+};
+$('convoy-leave').onclick = () => postConvoy({ room: '' });
+async function postConvoy(body) {
+  try {
+    const r = await fetch('api/convoy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    convoy.info = await r.json();
+    if (!convoy.info.active) { for (const id of [...convoy.peers.keys()]) convoy.onLeave(id); }
+  } catch { $('convoy-msg').textContent = 'Serveur injoignable.'; }
+  renderConvoy();
+}
+let convoyRenderPending = false;
+function scheduleConvoyRender() {
+  if (convoyRenderPending) return;
+  convoyRenderPending = true;
+  setTimeout(() => { convoyRenderPending = false; renderConvoy(); }, 1000);
+}
+function renderConvoy() {
+  const info = convoy.info;
+  const n = convoy.peers.size;
+  $('convoy-badge').textContent = n;
+  $('convoy-badge').classList.toggle('hidden', !n);
+  $('btn-convoy').classList.toggle('on', !!info.active);
+  if (!$('convoy-sheet').open) return;
+  if (document.activeElement !== $('convoy-name')) $('convoy-name').value = info.name ?? '';
+  if (document.activeElement !== $('convoy-room')) $('convoy-room').value = info.room ?? '';
+  $('convoy-leave').classList.toggle('hidden', !info.active);
+  $('convoy-join').textContent = info.active ? 'Mettre à jour' : 'Rejoindre';
+  $('convoy-msg').textContent = !info.active ? 'Même code pour tout le convoi. Le code chiffre vos positions.'
+    : info.connected ? `Connecté (${info.broker}) · ${n} pote${n > 1 ? 's' : ''} en ligne`
+    : `Connexion… ${info.error ? '(' + info.error + ')' : ''}`;
+  const list = $('convoy-list');
+  list.replaceChildren();
+  const me = state.truck;
+  for (const p of convoy.positions(performance.now())) {
+    const li = document.createElement('li');
+    const dist = me ? Math.hypot(p.x - me.x, p.y - me.y) / 1000 : null;
+    const s = p.last ?? {};
+    const dest = s.job ? `→ ${s.job.dst}${s.job.dstCo ? ' · ' + s.job.dstCo : ''}` : 'Conduite libre';
+    li.innerHTML = `<span class="dot"></span><div class="who"><b></b><small></small></div><div class="num"></div>`;
+    li.querySelector('.dot').style.background = p.color;
+    li.querySelector('b').textContent = p.name;
+    li.querySelector('small').textContent = `${s.paused ? 'En pause · ' : ''}${dest}`;
+    li.querySelector('.num').textContent = `${Math.round(Math.abs(s.spd ?? 0) * 3.6)} km/h${dist != null ? ` · ${dist < 10 ? dist.toFixed(1) : Math.round(dist)} km` : ''}`;
+    li.onclick = () => {
+      state.followPeer = p.id;
+      state.follow = true;
+      $('btn-recenter').classList.remove('hidden');
+      $('convoy-sheet').close();
+      dirty = true;
+    };
+    list.append(li);
+  }
+  if (!list.children.length && info.active) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'Personne pour l\'instant. Tes potes doivent lancer ETS2 Map avec le même code.';
+    list.append(li);
+  }
+}
+setInterval(() => { if ($('convoy-sheet').open) renderConvoy(); }, 1000);
+
+window.__ets2map = { state, view, settings, store, renderer, route, convoy };

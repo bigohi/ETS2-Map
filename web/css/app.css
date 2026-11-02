@@ -179,3 +179,45 @@ dialog button.primary { width: 100%; background: var(--accent); color: #fff; bor
   .banner { bottom: calc(var(--safe-b) + 70px); }
   .pill { bottom: calc(var(--safe-b) + 66px); }
 }
+
+/* Toast ------------------------------------------------------------------ */
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  top: calc(var(--safe-t) + 150px);
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; border-radius: 12px;
+  background: var(--card); border: 1px solid var(--card-border); color: var(--text);
+  font-size: 14px; font-weight: 600; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+  white-space: nowrap; z-index: 5;
+}
+.toast button { background: none; border: none; color: var(--accent); font-weight: 700; font-size: 14px; padding: 0; cursor: pointer; }
+
+/* Convoy ------------------------------------------------------------------ */
+#btn-convoy { position: relative; }
+.badge {
+  position: absolute; top: -5px; right: -5px; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 10px; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+dialog#convoy-sheet {
+  border: 1px solid var(--card-border); border-radius: 18px;
+  background: var(--card); color: var(--text);
+  width: min(94vw, 440px); max-height: 86vh; padding: 18px 20px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+}
+.field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
+.field span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.field input {
+  font-size: 16px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--card-border); background: var(--bg); color: var(--text);
+}
+#convoy-list { list-style: none; margin: 8px 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+#convoy-list li {
+  display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px;
+  background: rgba(127, 127, 127, 0.12); cursor: pointer;
+}
+#convoy-list li.empty { cursor: default; font-size: 13px; color: var(--muted); }
+#convoy-list .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; border: 2px solid #fff; }
+#convoy-list .who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+#convoy-list .who small { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#convoy-list .num { font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
