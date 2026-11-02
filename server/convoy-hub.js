@@ -28,7 +28,7 @@ export class ConvoyHub {
     // so friends can tell "not in game" from "not connected".
     this.lastDriveAt = 0;
     this.presenceTimer = setInterval(() => {
-      if (this.convoy && Date.now() - this.lastDriveAt > 5000) this.convoy.publishState({ v: 1, offline: true });
+      if (this.convoy && Date.now() - this.lastDriveAt > 5000) this.convoy.publishState({ v: 1, offline: true, why: this.why ?? null });
     }, 2000);
     this.presenceTimer.unref();
   }

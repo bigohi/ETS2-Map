@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import readline from 'node:readline/promises';
 import { Router, RouteManager } from './route.js';
 import { ConvoyHub } from './convoy-hub.js';
+import { diagnose, ensurePlugin, WHY_TEXT } from './game-check.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB_DIR = path.join(ROOT, 'web');
@@ -115,14 +116,31 @@ if (args.ask && !convoy.config.room && process.stdin.isTTY) {
 onRouteChange = (route) => convoy.onRoute(route);
 const SITE = String(args.site ?? 'https://ets.enorme.bid').replace(/\/+$/, '');
 
+// Plugin in the game folder that is actually used (fixes a missed or failed install).
+const DLL_SOURCE = path.join(ROOT, 'plugin', 'build', 'ets2map_telemetry.dll');
+ensurePlugin(DLL_SOURCE).then((r) => {
+  if (r.result === 'installed') console.log(`[jeu] plugin installé : ${r.target}\n      Si ETS2 tourne déjà, redémarre-le.`);
+}).catch(() => {});
+
+// No truck data: find out why, every 15 s, tell this window and the convoy.
+let lastWhy = null;
+async function checkGame() {
+  const driving = latest && !(latest.x === 0 && latest.z === 0) && Date.now() - lastPacketAt < 10000;
+  if (driving) { lastWhy = null; convoy.why = null; return; }
+  const d = await diagnose({ dllSource: DLL_SOURCE, packetsSeen: Date.now() - lastPacketAt < 10000 }).catch(() => null);
+  if (!d) return;
+  convoy.why = d.why;
+  if (d.why !== lastWhy) console.log(`[jeu] ${WHY_TEXT[d.why]}`);
+  lastWhy = d.why;
+}
+setTimeout(checkGame, 6000).unref();
+setInterval(checkGame, 15000).unref();
+
 // Console hints for whoever runs this window (friends included).
 let gameSeen = false;
 setInterval(() => {
   if (gameSeen && Date.now() - lastPacketAt > 10000) { gameSeen = false; console.log('[jeu] plus de données du jeu (ETS2 fermé ?)'); }
 }, 5000).unref();
-setTimeout(() => {
-  if (!packetCount) console.log('[jeu] rien reçu d\'ETS2 pour l\'instant : lance le jeu (plugin installé avec « 1 - Installer le plugin », OK sur le message SDK).');
-}, 60000).unref();
 
 function onTelemetry(text, source = 'udp') {
   let obj;

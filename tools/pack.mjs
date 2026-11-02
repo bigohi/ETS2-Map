@@ -28,7 +28,7 @@ const copy = (rel, filter = () => true) => {
   fs.cpSync(src, dst, { recursive: true, filter: (s) => fs.statSync(s).isDirectory() || filter(s) });
 };
 
-for (const f of ['server/server.js', 'server/route.js', 'server/convoy.js', 'server/convoy-hub.js', 'tools/game-dir.mjs', 'package.json']) copy(f);
+for (const f of ['server/server.js', 'server/route.js', 'server/convoy.js', 'server/convoy-hub.js', 'server/game-check.js', 'tools/game-dir.mjs', 'package.json']) copy(f);
 copy('web');
 copy('node_modules/qrcode-terminal');
 copy('plugin/build/ets2map_telemetry.dll');

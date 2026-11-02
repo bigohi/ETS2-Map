@@ -24,6 +24,17 @@ const view = new View();
 const route = new RouteView();
 const convoy = new ConvoyView();
 let peers = [];   // friends' smoothed positions for the current frame
+
+// Why a PC sends no truck (server/game-check.js), as shown to the convoy.
+const WHY = {
+  'no-game': 'ETS2 pas lancé',
+  'no-plugin': 'Plugin absent : relancer « 1 - Installer le plugin », ETS2 fermé',
+  restart: 'Plugin installé pendant le jeu : redémarrer ETS2',
+  'not-loaded': 'ETS2 n\'a pas chargé le plugin : redémarrer ETS2, OK sur « SDK »',
+  menu: 'Dans les menus : charger le profil et prendre la route',
+  'no-data': 'Plugin chargé mais rien n\'arrive : fermer les autres fenêtres ETS2 Map',
+};
+
 let dirty = true;
 store.onTileLoaded = () => { dirty = true; };
 
@@ -235,7 +246,7 @@ function updateBanner() {
   else if (state.online && !state.online.room) text = 'Rejoins ton convoi (bouton Convoi)';
   else if (state.online && state.status.brokerDown) text = 'Connexion au convoi…';
   else if (state.online && !state.online.meId) text = `En attente de ${state.online.name || 'toi'}… (ETS2 Map lancé sur ton PC, même code)`;
-  else if (state.online && state.meOffline) text = 'ETS2 Map tourne sur ton PC, mais ETS2 n\'est pas sur la route';
+  else if (state.online && state.meOffline) text = WHY[state.meWhy] ?? 'ETS2 Map tourne sur ton PC, mais ETS2 n\'est pas sur la route';
   else if (!state.status.connected) text = state.telemetry ? 'Jeu déconnecté' : 'En attente du jeu…';
   else if (state.telemetry?.paused) text = 'Jeu en pause';
   b.textContent = text;
@@ -681,7 +692,7 @@ function startOnline() {
         }
         if (id === cfg.meId) {
           if (cfg.name !== name) { cfg.name = name; saveOnline(cfg); convoy.info.name = name; }
-          if (d?.offline) { state.meOffline = true; state.status.connected = false; updateBanner(); return; }
+          if (d?.offline) { state.meOffline = true; state.meWhy = d.why; state.status.connected = false; updateBanner(); return; }
           state.meOffline = false;
           onTelemetry(d);
         } else {
@@ -721,6 +732,7 @@ function setOnlineMe(id, name) {
 // Debug hook for automated checks.
 // ---------------------------------------------------------------------------
 // Convoy sheet.
+
 
 const meName = () => convoy.info.name || 'Moi';
 $('btn-convoy').onclick = () => { renderConvoy(); $('convoy-sheet').showModal(); };
@@ -780,7 +792,7 @@ function renderConvoy() {
     const li = document.createElement('li');
     const dist = me && !p.offline ? Math.hypot(p.x - me.x, p.y - me.y) / 1000 : null;
     const s = p.last ?? {};
-    const dest = p.offline ? 'ETS2 Map lancé, pas encore sur la route' : s.job ? `→ ${s.job.dst}${s.job.dstCo ? ' · ' + s.job.dstCo : ''}` : 'Conduite libre';
+    const dest = p.offline ? (WHY[s.why] ?? 'ETS2 Map lancé, pas encore sur la route') : s.job ? `→ ${s.job.dst}${s.job.dstCo ? ' · ' + s.job.dstCo : ''}` : 'Conduite libre';
     li.innerHTML = `<span class="dot"></span><div class="who"><b></b><small></small></div><div class="num"></div>`;
     li.querySelector('.dot').style.background = p.color;
     li.querySelector('b').textContent = p.name;
