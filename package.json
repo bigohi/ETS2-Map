@@ -17,6 +17,7 @@
     "map:parse": "node tools/map/pipeline.mjs parse",
     "map:bake": "node tools/map/pipeline.mjs bake",
     "map:route": "node tools/map/pipeline.mjs route",
+    "map:base": "node tools/map/pipeline.mjs base",
     "plugin:build": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/build.ps1",
     "plugin:test": "plugin\\build\\harness.exe plugin\\build\\ets2map_telemetry.dll",
     "plugin:install": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/install.ps1",

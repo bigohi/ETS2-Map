@@ -365,7 +365,11 @@ function main() {
   // companies[cityToken][companyToken] = [[x, y], ...] (game meters)
   const companies: Record<string, Record<string, number[][]>> = {};
   const cityTokens: Record<string, string> = {};
-  for (const c of values<{ token: string; name: string }>(data.cities)) cityTokens[c.token] = c.name;
+  const cityCountry: Record<string, string> = {};
+  for (const c of values<{ token: string; name: string; countryToken: string }>(data.cities)) {
+    cityTokens[c.token] = c.name;
+    cityCountry[c.token] = c.countryToken;
+  }
   for (const c of values<{ token: string; cityToken: string; x: number; y: number; dlcGuard?: number }>((data as any).companies)) {
     if (guards && c.dlcGuard != null && !guards.has(c.dlcGuard)) continue;
     ((companies[c.cityToken] ??= {})[c.token] ??= []).push([Math.round(c.x), Math.round(c.y)]);
@@ -444,6 +448,7 @@ function main() {
     cities,
     countries,
     cityNames: cityTokens,
+    cityCountry,
     cityPos,
     companies,
   });

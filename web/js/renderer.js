@@ -1,9 +1,12 @@
 // Canvas renderer: map layers, labels, POIs, trail, destination and truck.
 import { FREEWAY, DIVIDED, LOCAL, NO_VEHICLES, TRAIN, TRAM, UNKNOWN } from './mapdata.js';
+import { countryFr } from './countries.js';
 
 export const THEMES = {
   dark: {
-    bg: '#1b1f24',
+    bg: '#0d141d',          // sea
+    land: '#21252c',
+    border: 'rgba(190,200,215,0.55)',
     areas: ['#4f555c', '#3f3a30', '#34302a', '#24352a', '#5a2323', '#29482a', '#213a4d', '#57501f', '#3a2b4d'],
     road: {
       [FREEWAY]: ['#e0a63a', '#5c4214'],
@@ -24,7 +27,9 @@ export const THEMES = {
     poiHalo: 'rgba(20,23,27,0.85)',
   },
   light: {
-    bg: '#e9e7e0',
+    bg: '#a9cfe2',          // sea
+    land: '#ebe8e1',
+    border: 'rgba(95,90,120,0.55)',
     areas: ['#ffffff', '#f0dcb4', '#dfc493', '#c9dfb6', '#d9a6a6', '#a8d29b', '#9cc4dd', '#f1e38a', '#c8b2e0'],
     road: {
       [FREEWAY]: ['#f8c248', '#c4902a'],
@@ -138,7 +143,7 @@ export class Renderer {
     if (scene.opts.peerRoutes && scene.peers?.length) {
       const w = Math.max(4 * q, px(3.5));
       for (const peer of scene.peers) {
-        if (!peer.route?.active) continue;
+        if (!peer.route?.active || peer.hideRoute) continue;
         const paths = peer.route.path(q);
         // Dark underlay so the dashes read on top of amber highways.
         ctx.setLineDash([]);
@@ -191,7 +196,7 @@ export class Renderer {
 
     // Screen-space layers.
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const placed = [];
+    const placed = this.markerBoxes(view, scene);
     if (view.scale >= 0.06) this.drawPois(view, bbox, scene.opts, placed);
     this.drawLabels(view, placed);
     if (scene.source) this.drawPin(view, scene.source, theme.source, false);
@@ -225,6 +230,7 @@ export class Renderer {
     const far = view.scale < MID_BELOW;
     ctx.lineCap = far ? 'butt' : 'round';
     ctx.lineJoin = far ? 'bevel' : 'round';
+    this.drawLand(ctx, view, bbox, px);
     if (view.scale < OVERVIEW_BELOW) {
       this.drawRoadsFixed([store.overview], OV_PX, px);
       this.drawFerries([store.overview], px);
@@ -303,6 +309,31 @@ export class Renderer {
     ctx.drawImage(this.cacheCanvas,
       Math.round((off[0] - view.w * view.ax - c.margin) * dpr),
       Math.round((off[1] - view.h * view.ay - c.margin) * dpr));
+  }
+
+  /** Land, lakes and country borders under the roads. */
+  drawLand(ctx, view, bbox, px) {
+    const b = this.store.baseMap;
+    if (!b) return;
+    let parts;
+    if (view.scale < OVERVIEW_BELOW) parts = [b.overview];
+    else {
+      parts = [];
+      for (let tx = Math.floor(bbox[0] / b.cell); tx <= Math.floor(bbox[2] / b.cell); tx++)
+        for (let ty = Math.floor(bbox[1] / b.cell); ty <= Math.floor(bbox[3] / b.cell); ty++) {
+          const c = b.cells.get(`${tx}_${ty}`);
+          if (c) parts.push(c);
+        }
+    }
+    ctx.fillStyle = this.theme.land;
+    for (const p of parts) ctx.fill(p.land);
+    ctx.fillStyle = this.theme.bg;
+    for (const p of parts) ctx.fill(p.lakes);
+    ctx.strokeStyle = this.theme.border;
+    ctx.lineWidth = px(view.scale < OVERVIEW_BELOW ? 1.2 : 1.5);
+    ctx.setLineDash(view.scale < OVERVIEW_BELOW ? [] : [px(7), px(4)]);
+    for (const p of parts) ctx.stroke(p.borders);
+    ctx.setLineDash([]);
   }
 
   drawRoadsFixed(tiles, widths, px) {
@@ -387,6 +418,21 @@ export class Renderer {
     }
   }
 
+  /** Screen boxes of the truck, pins and friends: labels must not cover them. */
+  markerBoxes(view, scene) {
+    const boxes = [];
+    const add = (pos, l, t, r, b) => {
+      if (!pos) return;
+      const [x, y] = view.toScreen(pos[0], pos[1]);
+      boxes.push([x - l, y - t, x + r, y + b]);
+    };
+    if (scene.truck) add([scene.truck.x, scene.truck.y], 24, 24, 24, 24);
+    if (scene.dest) add(scene.dest, 14, 38, 14, 4);
+    if (scene.source) add(scene.source, 12, 30, 12, 4);
+    for (const p of scene.peers ?? []) add([p.x, p.y], 40, 18, 40, 38);
+    return boxes;
+  }
+
   drawLabels(view, placed) {
     const { ctx, store, theme } = this;
     const s = view.scale;
@@ -394,21 +440,6 @@ export class Renderer {
     ctx.textBaseline = 'middle';
     ctx.lineJoin = 'round';
 
-    // Countries when zoomed far out.
-    if (s < 0.012) {
-      ctx.font = '600 13px system-ui, sans-serif';
-      for (const c of store.countries) {
-        const [x, y] = view.toScreen(c.x, c.y);
-        if (x < -100 || y < -20 || x > view.w + 100 || y > view.h + 20) continue;
-        const text = c.name.toUpperCase();
-        const wdt = ctx.measureText(text).width;
-        const box = [x - wdt / 2, y - 9, x + wdt / 2, y + 9];
-        if (collides(placed, box)) continue;
-        placed.push(box);
-        ctx.fillStyle = theme.country;
-        ctx.fillText(text, x, y);
-      }
-    }
 
     // Cities: big ones first so they win collisions.
     const maxRank = s < 0.004 ? 2 : s < 0.012 ? 4 : s < 0.03 ? 7 : 99;
@@ -427,6 +458,25 @@ export class Renderer {
       ctx.strokeText(c.name, x, y);
       ctx.fillStyle = theme.label;
       ctx.fillText(c.name, x, y);
+    }
+
+    // Countries when zoomed out, wherever cities left room.
+    if (s < 0.012) {
+      ctx.font = '600 12px system-ui, sans-serif';
+      for (const c of store.countries) {
+        const [x, y] = view.toScreen(c.x, c.y);
+        if (x < -100 || y < -20 || x > view.w + 100 || y > view.h + 20) continue;
+        const text = countryFr(c.name).toUpperCase();
+        const wdt = ctx.measureText(text).width;
+        const box = [x - wdt / 2 - 4, y - 10, x + wdt / 2 + 4, y + 10];
+        if (collides(placed, box)) continue;
+        placed.push(box);
+        ctx.strokeStyle = theme.labelHalo;
+        ctx.lineWidth = 3;
+        ctx.strokeText(text, x, y);
+        ctx.fillStyle = theme.country;
+        ctx.fillText(text, x, y);
+      }
     }
   }
 

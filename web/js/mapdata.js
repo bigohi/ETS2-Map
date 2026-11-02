@@ -36,6 +36,15 @@ export class MapStore {
     this.countries = this.meta.countries.map(([name, x, y]) => ({ name, x, y }));
     const ov = await (await fetch(this.base + 'overview.json' + this.v)).json();
     this.overview = decodeTile(ov, this.q, this.meta);
+    // Land, lakes and borders (optional: older bakes have none).
+    this.baseMap = null;
+    fetch(this.base + 'base.json' + this.v).then((r) => (r.ok ? r.json() : null)).then((b) => {
+      if (!b) return;
+      const dec = (part) => ({ land: shapes(part.land, true), lakes: shapes(part.lakes, true), borders: shapes(part.borders, false) });
+      this.baseMap = { cell: b.cell, overview: dec(b.overview), cells: new Map(Object.entries(b.cells).map(([k, c]) => [k, dec(c)])) };
+      this.version++;
+      this.onTileLoaded();
+    }).catch(() => {});
     return this.meta;
   }
 
@@ -184,6 +193,12 @@ function decodeTile(json, q, meta) {
     }
   }
   return tile;
+}
+
+function shapes(list, close) {
+  const p = new Path2D();
+  for (const arr of list ?? []) addLine(p, arr, 0, close);
+  return p;
 }
 
 function addLine(path, arr, start, close) {

@@ -63,7 +63,10 @@ canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100
 .job-line1 { font-size: 17px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .job-line2 { font-size: 13px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .job-line2:empty { display: none; }
-.job-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 8px; }
+.job-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px 10px; margin-top: 8px; }
+.job-stats .v, .job-stats .r { overflow: hidden; text-overflow: ellipsis; }
+/* Phones in portrait: 2 x 2, so values never run into each other. */
+@media (max-width: 560px) { .job-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .job-stats > div { display: flex; flex-direction: column; min-width: 0; }
 .job-stats .k { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 .job-stats .v { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -243,3 +246,14 @@ dialog#convoy-sheet {
 .tv { display: flex; flex-direction: column; line-height: 1.12; }
 .tv small { font-size: 10.5px; font-weight: 600; color: var(--muted); }
 .tv small:empty { display: none; }
+
+/* Convoy rows: name, trip country to country, stats, actions */
+#convoy-list li { align-items: flex-start; }
+#convoy-list .dot { margin-top: 4px; }
+#convoy-list .who small.trip { color: var(--text); opacity: 0.85; white-space: normal; }
+#convoy-list .acts { display: flex; flex-direction: column; gap: 6px; flex: none; }
+#convoy-list .acts button.act {
+  padding: 6px 10px; border-radius: 8px; border: 1px solid var(--card-border);
+  background: var(--btn); color: var(--text); font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+#convoy-list .acts button.act.on { background: var(--accent); color: #fff; border-color: transparent; }

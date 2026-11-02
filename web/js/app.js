@@ -4,13 +4,14 @@ import { Renderer, View, THEMES } from './renderer.js';
 import { RouteView } from './route.js';
 import { ConvoyView } from './convoy.js';
 import { WebConvoy } from './mqtt-ws.js';
+import { countryFr } from './countries.js';
 
 const $ = (id) => document.getElementById(id);
 
 // ---------------------------------------------------------------------------
 // Settings (persisted).
 
-const DEFAULTS = { peerRoutes: true, route: true, night: true, pois: true, companies: true, shields: true, trail: true, autozoom: true, awake: true, headingUp: true, zoomBias: 0 };
+const DEFAULTS = { hiddenRoutes: [], peerRoutes: true, route: true, night: true, pois: true, companies: true, shields: true, trail: true, autozoom: true, awake: true, headingUp: true, zoomBias: 0 };
 const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('ets2map.settings') || '{}') };
 const saveSettings = () => localStorage.setItem('ets2map.settings', JSON.stringify(settings));
 
@@ -494,7 +495,12 @@ $('btn-rotate').onclick = () => {
   dirty = true;
 };
 $('btn-fit').onclick = () => fitOverview();
-$('btn-recenter').onclick = () => { state.followPeer = null; setFollow(true); };
+$('btn-recenter').onclick = () => { state.followPeer = null; setFollow(true); updateRecenter(); };
+// The pill says what it does: back to me when following a friend.
+function updateRecenter() {
+  const label = $('btn-recenter').querySelector('span');
+  if (label) label.textContent = state.followPeer ? 'Revenir sur moi' : 'Recentrer';
+}
 $('btn-menu').onclick = () => $('settings').showModal();
 $('btn-clear-dest').onclick = () => { clearDestination(); $('settings').close(); };
 $('btn-clear-trail').onclick = () => { state.trail = []; sessionStorage.removeItem('ets2map.trail'); dirty = true; };
@@ -592,6 +598,7 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 200));
 function frame(now) {
   state.truck = interpolatedTruck(now);
   peers = convoy.positions(now);
+  for (const p of peers) p.hideRoute = settings.hiddenRoutes.includes(p.id);
   const moving = (state.samples.length && !state.telemetry?.paused) || peers.length > 0;
   updateCamera(now);
   if (dirty || moving || gesture || renderer.needsRedraw) {
@@ -792,28 +799,49 @@ function renderConvoy() {
     const li = document.createElement('li');
     const dist = me && !p.offline ? Math.hypot(p.x - me.x, p.y - me.y) / 1000 : null;
     const s = p.last ?? {};
-    const dest = p.offline ? (WHY[s.why] ?? 'ETS2 Map lancé, pas encore sur la route') : s.job ? `→ ${s.job.dst}${s.job.dstCo ? ' · ' + s.job.dstCo : ''}` : 'Conduite libre';
-    li.innerHTML = `<span class="dot"></span><div class="who"><b></b><small></small></div><div class="num"></div>`;
+    // Trip, country to country: "Calais (France) → Berlin (Allemagne)".
+    const where = (city, token) => {
+      const c = countryFr(store.meta?.cityCountry?.[token]);
+      return city ? `${city}${c ? ` (${c})` : ''}` : c;
+    };
+    const trip = p.offline ? (WHY[s.why] ?? 'ETS2 Map lancé, pas encore sur la route')
+      : s.job ? `${where(s.job.src, s.job.srcId)} → ${where(s.job.dst, s.job.dstId)}` : 'Conduite libre';
+    const stats = p.offline ? 'hors jeu'
+      : [`${Math.round(Math.abs(s.spd ?? 0) * 3.6)} km/h`, dist != null ? `à ${dist < 10 ? dist.toFixed(1) : Math.round(dist)} km` : null, s.paused ? 'en pause' : null, s.job?.cargo].filter(Boolean).join(' · ');
+    li.innerHTML = `<span class="dot"></span><div class="who"><b></b><small class="trip"></small><small class="stats"></small></div><div class="acts"></div>`;
     li.querySelector('.dot').style.background = p.color;
     li.querySelector('b').textContent = p.name;
-    li.querySelector('small').textContent = `${s.paused ? 'En pause · ' : ''}${dest}`;
-    li.querySelector('.num').textContent = p.offline ? 'hors jeu' : `${Math.round(Math.abs(s.spd ?? 0) * 3.6)} km/h${dist != null ? ` · ${dist < 10 ? dist.toFixed(1) : Math.round(dist)} km` : ''}`;
-    if (state.online && !state.online.meId) {
-      const me = document.createElement('button');
-      me.type = 'button';
-      me.className = 'me-btn';
-      me.textContent = "C'est moi";
-      me.onclick = (ev) => { ev.stopPropagation(); setOnlineMe(p.id, p.name); };
-      li.append(me);
-    }
-    li.onclick = () => {
-      if (p.offline) return;
-      state.followPeer = p.id;
-      state.follow = true;
-      $('btn-recenter').classList.remove('hidden');
-      $('convoy-sheet').close();
-      dirty = true;
+    li.querySelector('.trip').textContent = trip;
+    li.querySelector('.stats').textContent = stats;
+    const acts = li.querySelector('.acts');
+    const button = (text, cls, onClick) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = cls;
+      btn.textContent = text;
+      btn.onclick = (ev) => { ev.stopPropagation(); onClick(); };
+      acts.append(btn);
+      return btn;
     };
+    if (!p.offline) {
+      const following = state.followPeer === p.id;
+      button(following ? 'Centré' : 'Centrer', `act${following ? ' on' : ''}`, () => {
+        state.followPeer = p.id;
+        state.follow = true;
+        $('btn-recenter').classList.remove('hidden');
+        updateRecenter();
+        $('convoy-sheet').close();
+        dirty = true;
+      });
+      const hidden = settings.hiddenRoutes.includes(p.id);
+      button(hidden ? 'Trajet masqué' : 'Trajet affiché', `act${hidden ? '' : ' on'}`, () => {
+        settings.hiddenRoutes = hidden ? settings.hiddenRoutes.filter((id) => id !== p.id) : [...settings.hiddenRoutes, p.id];
+        saveSettings();
+        renderConvoy();
+        dirty = true;
+      });
+    }
+    if (state.online && !state.online.meId) button("C'est moi", 'me-btn', () => setOnlineMe(p.id, p.name));
     list.append(li);
   }
   if (!list.children.length && info.active) {
