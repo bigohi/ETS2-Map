@@ -3,6 +3,7 @@ import { MapStore } from './mapdata.js';
 import { Renderer, View, THEMES } from './renderer.js';
 import { RouteView } from './route.js';
 import { ConvoyView } from './convoy.js';
+import { WebConvoy } from './mqtt-ws.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -210,6 +211,9 @@ function updateBanner() {
   let text = '';
   if (state.mapError) text = state.mapError;
   else if (state.status.serverDown) text = 'Serveur injoignable…';
+  else if (state.online && !state.online.room) text = 'Rejoins ton convoi (bouton Convoi)';
+  else if (state.online && state.status.brokerDown) text = 'Connexion au convoi…';
+  else if (state.online && !state.online.meId) text = `En attente de ${state.online.name || 'toi'}… (ETS2 Map lancé sur ton PC, même code)`;
   else if (!state.status.connected) text = state.telemetry ? 'Jeu déconnecté' : 'En attente du jeu…';
   else if (state.telemetry?.paused) text = 'Jeu en pause';
   b.textContent = text;
@@ -345,6 +349,12 @@ canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); setDestinati
 
 async function setDestination(x, y) {
   navigator.vibrate?.(30);
+  if (state.online) {
+    if (!online || !state.online.meId) { toast('Choisis d\'abord qui tu es (bouton Convoi)'); return; }
+    toast('Itinéraire vers ce point…', 'Annuler', clearDestination);
+    if (!(await online.sendCmd(state.online.meId, { action: 'target', x, y }))) toast('Convoi non connecté');
+    return;
+  }
   toast('Itinéraire vers ce point…', 'Annuler', clearDestination);
   try {
     const r = await fetch('api/route/target', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ x, y }) });
@@ -352,6 +362,11 @@ async function setDestination(x, y) {
   } catch { toast('Serveur injoignable'); }
 }
 async function clearDestination() {
+  if (state.online) {
+    if (online && state.online.meId) await online.sendCmd(state.online.meId, { action: 'clear' });
+    toast('Destination effacée');
+    return;
+  }
   await fetch('api/route/target', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clear: true }) }).catch(() => {});
   toast('Destination effacée');
 }
@@ -577,10 +592,107 @@ async function start() {
     state.mapError = 'Carte absente : lance "npm run map" sur le PC';
   }
   updateBanner();
-  connect();
+  if (await hasLocalServer()) connect();
+  else startOnline();
   requestAnimationFrame(frame);
 }
 start();
+
+// ---------------------------------------------------------------------------
+// Online mode (ets.enorme.bid): no PC server next to the phone. The phone joins
+// the convoy room itself over MQTT/WebSocket and shows "me" from my PC's
+// published telemetry, friends from theirs.
+
+async function hasLocalServer() {
+  try {
+    const r = await fetch('api/status', { cache: 'no-store' });
+    return r.ok && (r.headers.get('content-type') ?? '').includes('json');
+  } catch { return false; }
+}
+
+let online = null;
+const ONLINE_KEY = 'ets2map.online';
+function onlineConfig() {
+  const cfg = JSON.parse(localStorage.getItem(ONLINE_KEY) || '{}');
+  // Link from the PC console / QR code: #r=<code>&me=<playerId>&n=<pseudo>
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (h.get('r')) {
+    cfg.room = h.get('r');
+    cfg.meId = h.get('me') || null;
+    cfg.name = h.get('n') || cfg.name || '';
+    localStorage.setItem(ONLINE_KEY, JSON.stringify(cfg));
+    history.replaceState(null, '', location.pathname); // keep the code out of the address bar
+  }
+  return cfg;
+}
+function saveOnline(cfg) { localStorage.setItem(ONLINE_KEY, JSON.stringify(cfg)); }
+
+function startOnline() {
+  state.online = onlineConfig();
+  const cfg = state.online;
+  online?.stop();
+  online = null;
+  for (const id of [...convoy.peers.keys()]) convoy.onLeave(id);
+  convoy.info = { online: true, active: !!cfg.room, connected: false, name: cfg.name ?? '', room: cfg.room ?? '', broker: null, error: null };
+  state.status = { connected: false, online: true };
+  updateBanner();
+  renderConvoy();
+  if (!cfg.room) {
+    $('convoy-sheet').showModal();
+    renderConvoy();
+    return;
+  }
+  online = new WebConvoy({
+    room: cfg.room,
+    callbacks: {
+      onStatus: (st) => {
+        convoy.info = { ...convoy.info, connected: st.connected, broker: st.broker, error: st.error };
+        state.status.brokerDown = !st.connected;
+        renderConvoy();
+        updateBanner();
+      },
+      onState: (id, name, d) => {
+        if (!cfg.meId && cfg.name && name.toLowerCase() === cfg.name.toLowerCase()) {
+          cfg.meId = id;
+          saveOnline(cfg);
+          convoy.onLeave(id);
+        }
+        if (id === cfg.meId) {
+          if (cfg.name !== name) { cfg.name = name; saveOnline(cfg); convoy.info.name = name; }
+          onTelemetry(d);
+        } else {
+          convoy.onPeer({ id, name, state: d });
+          scheduleConvoyRender();
+        }
+      },
+      onRoute: (id, d) => {
+        if (id === cfg.meId) { route.set(d); if (state.truck) route.update(state.truck.x, state.truck.y); updateHud(); }
+        else convoy.onRoute(id, d);
+        dirty = true;
+      },
+      onLeave: (id) => {
+        if (id === cfg.meId) { state.status.connected = false; updateBanner(); }
+        else { convoy.onLeave(id); renderConvoy(); }
+        dirty = true;
+      },
+    },
+  });
+  online.start().catch(() => { convoy.info.error = 'navigateur non compatible (https requis)'; renderConvoy(); });
+}
+
+/** "This one is me" from the convoy list. */
+function setOnlineMe(id, name) {
+  const cfg = state.online;
+  cfg.meId = id;
+  cfg.name = name;
+  saveOnline(cfg);
+  convoy.info.name = name;
+  convoy.onLeave(id);
+  state.samples = [];
+  state.trail = [];
+  route.set(null);
+  renderConvoy();
+}
 
 // Debug hook for automated checks.
 // ---------------------------------------------------------------------------
@@ -596,6 +708,18 @@ $('convoy-join').onclick = async () => {
 };
 $('convoy-leave').onclick = () => postConvoy({ room: '' });
 async function postConvoy(body) {
+  if (state.online) {
+    const cfg = state.online;
+    if (body.room !== cfg.room || (body.name ?? cfg.name) !== cfg.name) cfg.meId = null;
+    cfg.room = body.room;
+    if (body.name != null) cfg.name = body.name;
+    saveOnline(cfg);
+    state.samples = [];
+    state.telemetry = null;
+    route.set(null);
+    startOnline();
+    return;
+  }
   try {
     const r = await fetch('api/convoy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     convoy.info = await r.json();
@@ -620,9 +744,11 @@ function renderConvoy() {
   if (document.activeElement !== $('convoy-room')) $('convoy-room').value = info.room ?? '';
   $('convoy-leave').classList.toggle('hidden', !info.active);
   $('convoy-join').textContent = info.active ? 'Mettre à jour' : 'Rejoindre';
-  $('convoy-msg').textContent = !info.active ? 'Même code pour tout le convoi. Le code chiffre vos positions.'
-    : info.connected ? `Connecté (${info.broker}) · ${n} pote${n > 1 ? 's' : ''} en ligne`
-    : `Connexion… ${info.error ? '(' + info.error + ')' : ''}`;
+  $('convoy-msg').textContent = !info.active
+    ? (info.online ? 'Mets le même pseudo et le même code que dans ETS2 Map sur ton PC.' : 'Même code pour tout le convoi. Le code chiffre vos positions.')
+    : info.connected
+      ? `Connecté (${info.broker}) · ${n} pote${n > 1 ? 's' : ''} en ligne${info.online && !state.online?.meId ? ` · « ${info.name} » pas encore vu : touche « C'est moi » sur ta ligne` : ''}`
+      : `Connexion… ${info.error ? '(' + info.error + ')' : ''}`;
   const list = $('convoy-list');
   list.replaceChildren();
   const me = state.truck;
@@ -636,6 +762,14 @@ function renderConvoy() {
     li.querySelector('b').textContent = p.name;
     li.querySelector('small').textContent = `${s.paused ? 'En pause · ' : ''}${dest}`;
     li.querySelector('.num').textContent = `${Math.round(Math.abs(s.spd ?? 0) * 3.6)} km/h${dist != null ? ` · ${dist < 10 ? dist.toFixed(1) : Math.round(dist)} km` : ''}`;
+    if (state.online && !state.online.meId) {
+      const me = document.createElement('button');
+      me.type = 'button';
+      me.className = 'me-btn';
+      me.textContent = "C'est moi";
+      me.onclick = (ev) => { ev.stopPropagation(); setOnlineMe(p.id, p.name); };
+      li.append(me);
+    }
     li.onclick = () => {
       state.followPeer = p.id;
       state.follow = true;
@@ -654,4 +788,4 @@ function renderConvoy() {
 }
 setInterval(() => { if ($('convoy-sheet').open) renderConvoy(); }, 1000);
 
-window.__ets2map = { state, view, settings, store, renderer, route, convoy };
+window.__ets2map = { state, view, settings, store, renderer, route, convoy, get online() { return online; } };

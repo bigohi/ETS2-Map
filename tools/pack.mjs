@@ -59,7 +59,7 @@ pause
 `);
 cmd('2 - Lancer ETS2 Map.cmd', `@echo off
 cd /d "%~dp0"
-${nodeCheck}node server\\server.js %*
+${nodeCheck}node server\\server.js --ask %*
 pause
 `);
 fs.writeFileSync(path.join(OUT, 'LISEZ-MOI.txt'), `ETS2 Map - convoi
@@ -68,10 +68,12 @@ fs.writeFileSync(path.join(OUT, 'LISEZ-MOI.txt'), `ETS2 Map - convoi
 1. Installe Node.js si besoin (le fichier 1 le fait tout seul avec winget).
 2. Double-clique "1 - Installer le plugin.cmd" (une seule fois, ETS2 ferme).
 3. Double-clique "2 - Lancer ETS2 Map.cmd" et laisse la fenetre ouverte.
-4. Sur ton telephone (meme Wi-Fi que le PC), ouvre l'adresse affichee
-   (ex. http://192.168.1.20:8080/) ou scanne le QR code.
-5. Sur le telephone : bouton "Convoi" (icone 2 personnes), mets ton pseudo
-   et le MEME code de convoi que tes potes, puis "Rejoindre".
+   Au premier lancement, donne ton pseudo et le MEME code de convoi que tes potes.
+4. Sur ton telephone, scanne le QR code affiche : il ouvre https://ets.enorme.bid
+   deja configure (marche partout, meme en 4G).
+5. Sans QR : ouvre https://ets.enorme.bid, bouton "Convoi" (2 personnes),
+   meme pseudo et meme code que sur le PC.
+   (Sur le meme Wi-Fi, l'adresse http://<IP du PC>:8080 marche aussi.)
 6. Lance ETS2. Au premier lancement, clique OK sur le message "SDK".
 
 Sur la carte : itineraire en rouge, potes en couleur avec leur pseudo,

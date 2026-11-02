@@ -9,11 +9,14 @@
 //   c.on('route', (peerId, obj) => ...);
 //   c.on('leave', (peerId) => ...);
 //   c.on('status', (status) => ...);
+//   c.on('cmd', (obj, { from }) => ...);   // commands sent to this player (phone on ets.enorme.bid)
 //   c.start();  c.publishState({...});  c.publishRoute({...});  await c.stop();
 //
-// Topics:   ets2map/v1/<roomHash>/<playerId>/<state|route|leave>
+// Topics:   ets2map/v2/<roomHash>/<playerId>/<state|route|leave|cmd>   (cmd: <playerId> is the recipient)
 // Payload:  12-byte IV | AES-256-GCM ciphertext | 16-byte tag
-// Plain:    {"t":kind,"id":playerId,"name":..,"d":obj,"ts":ms,"s":sessionId}
+// Plain:    {"t":kind,"id":senderId,"name":..,"d":obj,"ts":ms,"s":sessionId}
+// Key:      PBKDF2-SHA256(normalized room, 'ets2map-convoy-v2', 100000) -> AES-256 (WebCrypto-compatible,
+//           so the web app can join from a browser over MQTT/WebSocket).
 
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
@@ -21,6 +24,9 @@ import tls from 'node:tls';
 import net from 'node:net';
 
 export const DEFAULT_BROKERS = ['mqtts://broker.emqx.io:8883', 'mqtts://broker.hivemq.com:8883'];
+export const KDF_SALT = 'ets2map-convoy-v2';
+export const KDF_ITERATIONS = 100_000;
+export const TOPIC_ROOT = 'ets2map/v2';
 
 const KEEPALIVE_S = 30;
 const CONNECT_TIMEOUT_MS = 10_000;     // TCP + TLS + CONNACK + SUBACK
@@ -277,8 +283,8 @@ export class Convoy extends EventEmitter {
     this.id = sanitizeId(id);
     this.name = String(name ?? '').trim().slice(0, NAME_MAX) || 'Driver';
     this.brokers = Array.isArray(brokers) && brokers.length ? brokers.map(String) : DEFAULT_BROKERS.slice();
-    this.key = crypto.scryptSync(normRoom, 'ets2map-convoy-v1', 32);
-    this.base = `ets2map/v1/${this.roomHash}`;
+    this.key = crypto.pbkdf2Sync(normRoom, KDF_SALT, KDF_ITERATIONS, 32, 'sha256');
+    this.base = `${TOPIC_ROOT}/${this.roomHash}`;
     this.peers = new Map();   // id -> { name, last, sess }
 
     this._conn = null;        // active (ready or connecting) connection
@@ -336,6 +342,13 @@ export class Convoy extends EventEmitter {
 
   publishRoute(obj) {
     return this._publish('route', obj);
+  }
+
+  /** Command for one player (its server acts on it). */
+  publishCmd(toId, obj) {
+    const conn = this._conn;
+    if (!this._running || !conn || !conn.ready) return false;
+    return conn.publish(`${this.base}/${sanitizeId(toId)}/cmd`, this._encrypt('cmd', obj));
   }
 
   // Test hook: simulate a crash (socket destroyed, no DISCONNECT -> broker fires the Last Will).
@@ -468,8 +481,22 @@ export class Convoy extends EventEmitter {
   _onMessage(topic, payload, retain) {
     if (retain) return;                                   // we never publish retained
     const parts = topic.split('/');
-    if (parts.length !== 5 || parts[0] !== 'ets2map' || parts[1] !== 'v1' || parts[2] !== this.roomHash) return;
+    if (parts.length !== 5 || `${parts[0]}/${parts[1]}` !== TOPIC_ROOT || parts[2] !== this.roomHash) return;
     const pid = parts[3], kind = parts[4];
+    if (kind === 'cmd') {
+      // Addressed to us (topic carries the recipient), from a phone or a friend.
+      if (pid !== this.id) return;
+      const msg = this._decrypt(payload);
+      if (!msg || msg.t !== 'cmd' || typeof msg.ts !== 'number' || Math.abs(Date.now() - msg.ts) > MAX_AGE_MS) return;
+      this._emit('cmd', msg.d, { from: typeof msg.id === 'string' ? msg.id : null });
+      return;
+    }
+    if (kind === 'hello') {
+      // A phone on the web app just joined: it needs our route now.
+      const msg = this._decrypt(payload);
+      if (msg && msg.t === 'hello' && msg.id === pid && Math.abs(Date.now() - msg.ts) <= MAX_AGE_MS) this._emit('hello', pid);
+      return;
+    }
     if (pid === this.id) return;                          // our own echo
     if (kind !== 'state' && kind !== 'route' && kind !== 'leave') return;
     const msg = this._decrypt(payload);

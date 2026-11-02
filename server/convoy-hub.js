@@ -6,13 +6,15 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { Convoy } from './convoy.js';
 
-const STATE_EVERY_MS = 500;
-const ROUTE_REPEAT_MS = 45_000;
+// 4 per second: enough for a smooth truck on a phone that follows us online.
+const STATE_EVERY_MS = 250;
+const ROUTE_REPEAT_MS = 30_000;
 
 export class ConvoyHub {
-  constructor({ configPath, broadcast, brokers }) {
+  constructor({ configPath, broadcast, brokers, onCommand }) {
     this.configPath = configPath;
     this.broadcast = broadcast;   // (event, dataText) -> void
+    this.onCommand = onCommand;   // (cmd, { from }) -> void, from phones on the web app
     this.brokers = brokers;
     this.config = this.loadConfig();
     this.convoy = null;
@@ -78,6 +80,10 @@ export class ConvoyHub {
       this.peerRoutes.set(id, route);
       this.broadcast('peerroute', JSON.stringify({ id, route }));
     });
+    c.on('hello', () => setTimeout(() => this.republishRoute(), 300 + Math.random() * 700).unref());
+    c.on('cmd', (cmd, meta) => {
+      try { this.onCommand?.(cmd, meta); } catch (err) { console.error(`[convoy] command: ${err.message}`); }
+    });
     c.on('leave', (id) => {
       this.peers.delete(id);
       this.peerRoutes.delete(id);
@@ -124,12 +130,13 @@ export class ConvoyHub {
     if (now - this.lastState < STATE_EVERY_MS) return;
     if (t.x === 0 && t.z === 0) return;
     this.lastState = now;
+    // The whole HUD, so a phone on the web app can show this truck as "me".
+    const r1 = (v) => Math.round(v * 10) / 10;
     this.convoy.publishState({
-      x: Math.round(t.x * 10) / 10, z: Math.round(t.z * 10) / 10, h: Math.round(t.h * 1e5) / 1e5,
-      spd: Math.round(t.spd * 10) / 10, paused: !!t.paused,
-      truck: t.truck ? `${t.truck.brand ?? ''} ${t.truck.name ?? ''}`.trim() : '',
-      job: t.job ? { dst: t.job.dst, dstCo: t.job.dstCo, cargo: t.job.cargo } : null,
-      nd: Math.round(t.nd ?? 0),
+      v: 1, x: r1(t.x), z: r1(t.z), h: Math.round(t.h * 1e5) / 1e5, paused: !!t.paused,
+      spd: r1(t.spd), cc: r1(t.cc), lim: r1(t.lim), nd: Math.round(t.nd ?? 0), nt: Math.round(t.nt ?? 0),
+      fuel: r1(t.fuel), range: Math.round(t.range ?? 0), gt: t.gt, rest: t.rest, gear: t.gear,
+      truck: t.truck ?? null, job: t.job ?? null,
     });
   }
 

@@ -5,9 +5,11 @@
   "description": "Euro Truck Simulator 2 live map on your phone: own SCS telemetry plugin, LAN server, phone web app.",
   "type": "module",
   "scripts": {
-    "start": "node server/server.js",
+    "start": "node server/server.js --ask",
     "sim": "node server/sim.js",
     "pack": "node tools/pack.mjs",
+    "site": "node tools/site.mjs",
+    "site:deploy": "node tools/site.mjs --deploy",
     "test:convoy": "node server/convoy-test.mjs",
     "test:route": "node server/route-test.mjs",
     "map": "node tools/map/pipeline.mjs all",

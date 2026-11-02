@@ -20,7 +20,7 @@ flowchart LR
 | Serveur | `server/server.js` | Reçoit l'UDP, sert l'appli et la carte, pousse la télémétrie aux téléphones (Server-Sent Events). Aucune dépendance obligatoire. |
 | Appli téléphone | `web/` | Carte vectorielle dessinée en Canvas, orientée dans le sens de la marche, zoom auto selon la vitesse, gestes (glisser, pincer, double tap), thème nuit/jour, ajout à l'écran d'accueil. |
 | Itinéraire | `server/route.js` | Calcule l'itinéraire le plus rapide (A*, 2 à 25 ms pour toute l'Europe) sur le graphe routier du jeu : voies, sens uniques, tourne-à-gauche des échangeurs, ferries. Recalcule si tu sors de l'itinéraire plus de 2,5 s. |
-| Convoi | `server/convoy.js`, `server/convoy-hub.js` | Partage ta position, ta mission et ton itinéraire avec les potes du même code de convoi, via un broker MQTT public. Tout est chiffré (AES-256-GCM) avec le code. |
+| Convoi | `server/convoy.js`, `server/convoy-hub.js` | Partage ta position, ta mission et ton itinéraire avec les potes du même code de convoi, via un broker MQTT public. Tout est chiffré (AES-256-GCM, clé PBKDF2 du code). |
 | Carte | `tools/map/` | Extrait le réseau routier de **tes** fichiers du jeu (DLC possédés seulement) et le découpe en tuiles légères (4 Mo en gzip pour toute l'Europe). |
 
 ## Utilisation
@@ -53,6 +53,19 @@ Il suit le plus rapide, comme le GPS du jeu par défaut ; il peut différer du G
 Fonctionne en mode Convoi officiel, sur TruckersMP ou en solo chacun de son côté : chaque PC envoie sa propre télémétrie.
 Le code de convoi sert de clé : ceux qui ne l'ont pas ne voient rien. Brokers : `broker.emqx.io`, puis `broker.hivemq.com` en secours. Tous les potes doivent garder la même liste ; on la change avec `--broker mqtts://hôte:8883`. Si les potes sont sur des brokers différents, ils ne se voient pas.
 En ligne de commande : `npm start -- --convoy <code> --name <pseudo>`. Le choix est gardé dans `data/config.json`.
+
+## En ligne : ets.enorme.bid
+
+Tout le convoi peut ouvrir **https://ets.enorme.bid** en même temps, depuis n'importe où (Wi-Fi ou 4G), sans être sur le réseau du PC.
+
+- Chaque joueur garde ETS2 Map lancé sur son PC (plugin + serveur) : c'est lui qui publie sa télémétrie (4 fois/s), son itinéraire et reçoit les destinations choisies sur la carte.
+- Au premier lancement, la fenêtre demande **pseudo** et **code du convoi**, puis affiche le lien `https://ets.enorme.bid/#r=<code>&me=<id>&n=<pseudo>` et son QR code : le scanner configure le téléphone.
+- Sans le lien : bouton Convoi sur le site → même pseudo et même code que sur le PC (ou « C'est moi » sur sa ligne).
+- Le téléphone rejoint directement le salon MQTT (WebSocket chiffré, `broker.emqx.io:8084` puis `broker.hivemq.com:8884`) ; le site n'est qu'une page statique avec la carte. Sans le code, on ne voit rien.
+- En HTTPS, l'écran reste allumé (Wake Lock) et le site s'ajoute à l'écran d'accueil.
+- Mise à jour du site : `npm run site:deploy` (projet Vercel `ets2-map`, domaine `ets.enorme.bid`, DNS : CNAME `ets` chez Cloudflare, proxy désactivé).
+
+Le mode Wi-Fi (`http://<IP du PC>:8080`) reste disponible : 20 mises à jour/s au lieu de 4, sans Internet.
 
 ## Pack pour les potes
 
@@ -100,6 +113,8 @@ Tests : `npm run test:route` (itinéraires depuis Calais vers 10 villes) et `npm
 | `--convoy`, `--name` | | rejoindre un convoi au démarrage |
 | `--broker` | emqx, hivemq | brokers MQTT, séparés par des virgules |
 | `--config` | `data/config.json` | pseudo, code et identifiant du convoi |
+| `--ask` | | demande pseudo + code au premier lancement (utilisé par `npm start` et les .cmd) |
+| `--site` | `https://ets.enorme.bid` | adresse du site affichée avec le lien et le QR code |
 
 ## Hors de chez toi / écran toujours allumé
 

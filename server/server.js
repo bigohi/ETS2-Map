@@ -14,6 +14,7 @@ import path from 'node:path';
 import os from 'node:os';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import readline from 'node:readline/promises';
 import { Router, RouteManager } from './route.js';
 import { ConvoyHub } from './convoy-hub.js';
 
@@ -85,13 +86,31 @@ const convoy = new ConvoyHub({
   configPath: path.resolve(ROOT, String(args.config ?? 'data/config.json')),
   broadcast: (event, data) => broadcast(event, data),
   brokers: args.broker ? String(args.broker).split(',') : undefined,
+  // Long press on the web app (ets.enorme.bid) arrives as a command.
+  onCommand: (cmd) => {
+    if (!routes || !cmd) return;
+    if (cmd.action === 'clear') routes.setManualTarget(null);
+    else if (cmd.action === 'target' && Number.isFinite(cmd.x) && Number.isFinite(cmd.y)) routes.setManualTarget(cmd.x, cmd.y);
+    else return;
+    if (latest) routes.update(latest);
+  },
 });
 if (typeof args.convoy === 'string' || typeof args.name === 'string') {
   convoy.configure({ room: typeof args.convoy === 'string' ? args.convoy : undefined, name: typeof args.name === 'string' ? args.name : undefined });
 } else if (convoy.config.room) {
   convoy.restart();
 }
+// First launch from the .cmd: ask for the convoy once, then it is remembered.
+if (args.ask && !convoy.config.room && process.stdin.isTTY) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log('\nConvoi (Entrée pour passer, modifiable ensuite depuis le téléphone)');
+  const name = (await rl.question('  Ton pseudo : ')).trim();
+  const room = name ? (await rl.question('  Code du convoi (le même pour tous) : ')).trim() : '';
+  rl.close();
+  if (name && room) convoy.configure({ name, room });
+}
 onRouteChange = (route) => convoy.onRoute(route);
+const SITE = String(args.site ?? 'https://ets.enorme.bid').replace(/\/+$/, '');
 
 function onTelemetry(text, source = 'udp') {
   let obj;
@@ -295,10 +314,18 @@ server.listen(HTTP_PORT, '0.0.0.0', async () => {
   if (!fs.existsSync(path.join(MAP_DIR, 'meta.json'))) {
     console.log('\nNo map data yet: run "npm run map" once (see README).');
   }
-  if (urls.length && !args['no-qr']) {
+  // Online: works on 4G too, the phone joins the convoy as this player.
+  const c = convoy.config;
+  const onlineUrl = c.room ? `${SITE}/#r=${encodeURIComponent(c.room)}&me=${c.id}&n=${encodeURIComponent(c.name || '')}` : null;
+  if (onlineUrl) {
+    console.log(`\nOr from anywhere (convoy "${c.room}" as ${c.name || '?'}):`);
+    console.log(`  ${onlineUrl}`);
+  }
+  const qrUrl = onlineUrl ?? urls[0];
+  if (qrUrl && !args['no-qr']) {
     try {
       const qr = (await import('qrcode-terminal')).default;
-      qr.generate(urls[0], { small: true }, (code) => console.log('\n' + code));
+      qr.generate(qrUrl, { small: true }, (code) => console.log(`\n${onlineUrl ? 'QR = online link' : 'QR = Wi-Fi link'}\n${code}`));
     } catch { /* qrcode-terminal not installed: the URL is enough */ }
   }
 });
