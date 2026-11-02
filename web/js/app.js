@@ -141,9 +141,21 @@ const fmtDur = (min) => {
 const fmtKm = (m) => (m < 10000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 1000)} km`);
 const fmtMoney = (n) => `${Number(n).toLocaleString('fr-FR')} €`;
 
+// Game time runs faster than real time: x19 on the road in ETS2 (local.scale
+// from the SDK), x3 in cities. Durations are converted with the road scale.
+let roadScale = 19;
+const toReal = (gameMinutes) => gameMinutes / roadScale;
+const fmtReal = (date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+function setReal(id, text) { $(id).textContent = text ?? ''; }
+
+// The real clock ticks on its own, game or not.
+setInterval(() => { setReal('clock-real', `${fmtReal(new Date())} réel`); if (state.telemetry) updateHud(); }, 1000);
+setReal('clock-real', `${fmtReal(new Date())} réel`);
+
 function updateHud() {
   const t = state.telemetry;
   if (!t) return;
+  if (t.scale >= 10 && t.scale <= 60) roadScale = t.scale;
 
   // Speed cluster.
   const kmh = Math.round(Math.abs(t.spd) * 3.6);
@@ -165,6 +177,7 @@ function updateHud() {
   $('fuel-val').textContent = t.range > 0 ? `${Math.round(t.range)} km` : `${Math.round(t.fuel)} L`;
   $('rest-val').textContent = t.rest > 0 ? fmtDur(t.rest) : t.rest < 0 ? 'Repos !' : '—';
   $('rest-val').classList.toggle('tired', t.rest < 120);
+  setReal('rest-real', t.rest > 0 ? `≈ ${fmtDur(toReal(t.rest))} réel` : '');
   $('clock-val').textContent = t.gt ? fmtClock(t.gt) : '—';
 
   // Job / navigation card.
@@ -187,17 +200,25 @@ function updateHud() {
   if (ownRoute) {
     // Our estimate is in real driving time.
     $('nav-dist').textContent = fmtKm(route.remaining());
-    $('nav-time').textContent = `≈ ${fmtDur(route.remainingDuration() / 60)}`;
-    $('nav-eta').textContent = '—';
+    // Our estimate is real driving time: show the game equivalent under it.
+    const realMin = route.remainingDuration() / 60;
+    $('nav-time').textContent = `≈ ${fmtDur(realMin)}`;
+    setReal('nav-time-real', 'réel');
+    $('nav-eta').textContent = t.gt ? fmtClock(t.gt + realMin * roadScale) : '—';
+    setReal('nav-eta-real', `réel ${fmtReal(new Date(Date.now() + realMin * 60000))}`);
   } else {
     $('nav-dist').textContent = hasNav ? fmtKm(t.nd) : '—';
     $('nav-time').textContent = hasNav && t.nt > 0 ? fmtDur(t.nt / 60) : '—';
     $('nav-eta').textContent = hasNav && t.nt > 0 && t.gt ? fmtClock(t.gt + t.nt / 60) : '—';
+    const realMin = hasNav && t.nt > 0 ? toReal(t.nt / 60) : null;
+    setReal('nav-time-real', realMin != null ? `≈ ${fmtDur(realMin)} réel` : '');
+    setReal('nav-eta-real', realMin != null ? `réel ${fmtReal(new Date(Date.now() + realMin * 60000))}` : '');
   }
   const dl = $('deadline');
   if (job && job.deliv && t.gt && job.deliv < 0xfffffff0) {
     const left = job.deliv - t.gt;
     dl.textContent = left >= 0 ? fmtDur(left) : `+${fmtDur(-left)}`;
+    setReal('deadline-real', left >= 0 ? `≈ ${fmtDur(toReal(left))} réel` : `+${fmtDur(toReal(-left))} réel`);
     dl.classList.toggle('late', left < 0 || (t.nt > 0 && left < t.nt / 60));
     dl.classList.toggle('tight', left >= 0 && t.nt > 0 && left < (t.nt / 60) * 1.15 && left >= t.nt / 60);
     $('deadline-box').classList.remove('hidden');

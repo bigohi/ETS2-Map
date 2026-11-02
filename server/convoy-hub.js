@@ -135,7 +135,7 @@ export class ConvoyHub {
     this.convoy.publishState({
       v: 1, x: r1(t.x), z: r1(t.z), h: Math.round(t.h * 1e5) / 1e5, paused: !!t.paused,
       spd: r1(t.spd), cc: r1(t.cc), lim: r1(t.lim), nd: Math.round(t.nd ?? 0), nt: Math.round(t.nt ?? 0),
-      fuel: r1(t.fuel), range: Math.round(t.range ?? 0), gt: t.gt, rest: t.rest, gear: t.gear,
+      fuel: r1(t.fuel), range: Math.round(t.range ?? 0), gt: t.gt, rest: t.rest, gear: t.gear, scale: t.scale,
       truck: t.truck ?? null, job: t.job ?? null,
     });
   }

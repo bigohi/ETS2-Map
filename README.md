@@ -1,6 +1,6 @@
 # ETS2-Map
 
-La carte d'Euro Truck Simulator 2 en direct sur ton téléphone : position du camion, **itinéraire en rouge sur la route**, **les potes du convoi en direct**, routes, échangeurs, stations, logos des entreprises, destination de la livraison, vitesse, limitation, régulateur, distance et heure d'arrivée, délai, carburant et pause.
+La carte d'Euro Truck Simulator 2 en direct sur ton téléphone : position du camion, **itinéraire en rouge sur la route**, **les potes du convoi en direct**, routes, échangeurs, stations, logos des entreprises, destination de la livraison, vitesse, limitation, régulateur, distance et heure d'arrivée, délai, carburant et pause, avec l'équivalent en temps réel sous chaque temps du jeu (le temps du jeu passe 19 fois plus vite sur la route).
 
 ```mermaid
 flowchart LR

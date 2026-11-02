@@ -23,9 +23,9 @@
     <div class="job-line2" id="job-sub"></div>
     <div class="job-stats">
       <div><span class="k">Distance</span><span id="nav-dist" class="v">—</span></div>
-      <div><span class="k">Trajet</span><span id="nav-time" class="v">—</span></div>
-      <div><span class="k">Arrivée</span><span id="nav-eta" class="v">—</span></div>
-      <div id="deadline-box"><span class="k">Délai</span><span id="deadline" class="v">—</span></div>
+      <div><span class="k">Trajet</span><span id="nav-time" class="v">—</span><span id="nav-time-real" class="r"></span></div>
+      <div><span class="k">Arrivée</span><span id="nav-eta" class="v">—</span><span id="nav-eta-real" class="r"></span></div>
+      <div id="deadline-box"><span class="k">Délai</span><span id="deadline" class="v">—</span><span id="deadline-real" class="r"></span></div>
     </div>
   </section>
 
@@ -49,13 +49,13 @@
       <div class="fuel-wrap"><div id="fuel-bar" class="fuel-bar"></div></div>
       <span id="fuel-val">—</span>
     </div>
-    <div class="info-item" title="Prochaine pause">
+    <div class="info-item" title="Prochaine pause (jeu / réel)">
       <svg viewBox="0 0 24 24" class="ico"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm-1 3v6.2l5 3 1-1.7-4-2.4V7z"/></svg>
-      <span id="rest-val">—</span>
+      <span class="tv"><span id="rest-val">—</span><small id="rest-real"></small></span>
     </div>
-    <div class="info-item" title="Heure du jeu">
+    <div class="info-item" title="Heure du jeu / heure réelle">
       <svg viewBox="0 0 24 24" class="ico"><path d="M7 2h2v2h6V2h2v2h3a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3V2zm12 8H5v9h14v-9z"/></svg>
-      <span id="clock-val">—</span>
+      <span class="tv"><span id="clock-val">—</span><small id="clock-real"></small></span>
     </div>
   </section>
 

@@ -236,3 +236,10 @@ dialog#convoy-sheet {
   flex: none; padding: 6px 10px; border-radius: 8px; border: none;
   background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; cursor: pointer;
 }
+
+/* Real-time equivalents under game times */
+.job-stats .r { font-size: 11px; font-weight: 600; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.job-stats .r:empty { display: none; }
+.tv { display: flex; flex-direction: column; line-height: 1.12; }
+.tv small { font-size: 10.5px; font-weight: 600; color: var(--muted); }
+.tv small:empty { display: none; }
