@@ -24,6 +24,13 @@ export class ConvoyHub {
     this.myRoute = null;
     this.routeTimer = setInterval(() => this.republishRoute(), ROUTE_REPEAT_MS);
     this.routeTimer.unref();
+    // Visible in the convoy even before the truck is on the road ("ETS2 pas lancé"),
+    // so friends can tell "not in game" from "not connected".
+    this.lastDriveAt = 0;
+    this.presenceTimer = setInterval(() => {
+      if (this.convoy && Date.now() - this.lastDriveAt > 5000) this.convoy.publishState({ v: 1, offline: true });
+    }, 2000);
+    this.presenceTimer.unref();
   }
 
   loadConfig() {
@@ -66,12 +73,22 @@ export class ConvoyHub {
     c.on('status', (st) => {
       // Just (re)connected: our route may have been dropped while offline.
       if (st.connected && !wasConnected) setTimeout(() => this.republishRoute(), 300).unref();
+      if (st.connected !== wasConnected) {
+        console.log(st.connected
+          ? `[convoi] connecté à ${String(st.broker).replace(/^mqtts?:\/\//, '')} (code « ${this.config.room} »)`
+          : `[convoi] déconnecté${st.error ? ' : ' + st.error : ''}, nouvel essai…`);
+      }
       wasConnected = st.connected;
       this.sendStatus();
     });
     c.on('state', (id, state, meta) => {
       // A friend just showed up: send them our route without waiting.
-      if (!this.peers.has(id)) setTimeout(() => this.republishRoute(), 300).unref();
+      if (!this.peers.has(id)) {
+        setTimeout(() => this.republishRoute(), 300).unref();
+        console.log(`[convoi] + ${meta?.name ?? '?'} ${state?.offline ? '(ETS2 pas lancé)' : '(en jeu)'}`);
+      } else if (!!this.peers.get(id).state?.offline !== !!state?.offline) {
+        console.log(`[convoi] ${meta?.name ?? '?'} ${state?.offline ? 'a quitté la route' : 'est en jeu'}`);
+      }
       const p = { id, name: meta?.name ?? state?.name ?? '?', state, at: Date.now() };
       this.peers.set(id, p);
       this.broadcast('peer', JSON.stringify(p));
@@ -85,6 +102,7 @@ export class ConvoyHub {
       try { this.onCommand?.(cmd, meta); } catch (err) { console.error(`[convoy] command: ${err.message}`); }
     });
     c.on('leave', (id) => {
+      if (this.peers.has(id)) console.log(`[convoi] - ${this.peers.get(id).name}`);
       this.peers.delete(id);
       this.peerRoutes.delete(id);
       this.broadcast('peerleave', JSON.stringify({ id }));
@@ -129,6 +147,7 @@ export class ConvoyHub {
     const now = Date.now();
     if (now - this.lastState < STATE_EVERY_MS) return;
     if (t.x === 0 && t.z === 0) return;
+    this.lastDriveAt = now;
     this.lastState = now;
     // The whole HUD, so a phone on the web app can show this truck as "me".
     const r1 = (v) => Math.round(v * 10) / 10;

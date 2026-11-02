@@ -29,6 +29,9 @@ export class ConvoyView {
     peer.name = p.name;
     peer.last = p.state;
     const s = p.state;
+    // ETS2 Map running but no truck on the road: listed, not drawn.
+    peer.offline = !!s?.offline;
+    if (peer.offline) { peer.samples = []; return; }
     const now = performance.now();
     const prev = peer.samples[peer.samples.length - 1];
     if (prev && Math.hypot(prev.x - s.x, prev.y - s.z) > 800) peer.samples = []; // teleport
@@ -51,6 +54,12 @@ export class ConvoyView {
   onLeave(id) {
     this.peers.delete(id);
     this.version++;
+  }
+
+  /** Every peer, for the list: drawable ones carry x/y, others offline. */
+  all(now) {
+    const drawn = new Map(this.positions(now).map((p) => [p.id, p]));
+    return [...this.peers.values()].map((p) => drawn.get(p.id) ?? { id: p.id, name: p.name, color: p.color, last: p.last, offline: true });
   }
 
   /** Smoothed position of every peer for this frame. */

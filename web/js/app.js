@@ -235,6 +235,7 @@ function updateBanner() {
   else if (state.online && !state.online.room) text = 'Rejoins ton convoi (bouton Convoi)';
   else if (state.online && state.status.brokerDown) text = 'Connexion au convoi…';
   else if (state.online && !state.online.meId) text = `En attente de ${state.online.name || 'toi'}… (ETS2 Map lancé sur ton PC, même code)`;
+  else if (state.online && state.meOffline) text = 'ETS2 Map tourne sur ton PC, mais ETS2 n\'est pas sur la route';
   else if (!state.status.connected) text = state.telemetry ? 'Jeu déconnecté' : 'En attente du jeu…';
   else if (state.telemetry?.paused) text = 'Jeu en pause';
   b.textContent = text;
@@ -680,6 +681,8 @@ function startOnline() {
         }
         if (id === cfg.meId) {
           if (cfg.name !== name) { cfg.name = name; saveOnline(cfg); convoy.info.name = name; }
+          if (d?.offline) { state.meOffline = true; state.status.connected = false; updateBanner(); return; }
+          state.meOffline = false;
           onTelemetry(d);
         } else {
           convoy.onPeer({ id, name, state: d });
@@ -773,16 +776,16 @@ function renderConvoy() {
   const list = $('convoy-list');
   list.replaceChildren();
   const me = state.truck;
-  for (const p of convoy.positions(performance.now())) {
+  for (const p of convoy.all(performance.now())) {
     const li = document.createElement('li');
-    const dist = me ? Math.hypot(p.x - me.x, p.y - me.y) / 1000 : null;
+    const dist = me && !p.offline ? Math.hypot(p.x - me.x, p.y - me.y) / 1000 : null;
     const s = p.last ?? {};
-    const dest = s.job ? `→ ${s.job.dst}${s.job.dstCo ? ' · ' + s.job.dstCo : ''}` : 'Conduite libre';
+    const dest = p.offline ? 'ETS2 Map lancé, pas encore sur la route' : s.job ? `→ ${s.job.dst}${s.job.dstCo ? ' · ' + s.job.dstCo : ''}` : 'Conduite libre';
     li.innerHTML = `<span class="dot"></span><div class="who"><b></b><small></small></div><div class="num"></div>`;
     li.querySelector('.dot').style.background = p.color;
     li.querySelector('b').textContent = p.name;
     li.querySelector('small').textContent = `${s.paused ? 'En pause · ' : ''}${dest}`;
-    li.querySelector('.num').textContent = `${Math.round(Math.abs(s.spd ?? 0) * 3.6)} km/h${dist != null ? ` · ${dist < 10 ? dist.toFixed(1) : Math.round(dist)} km` : ''}`;
+    li.querySelector('.num').textContent = p.offline ? 'hors jeu' : `${Math.round(Math.abs(s.spd ?? 0) * 3.6)} km/h${dist != null ? ` · ${dist < 10 ? dist.toFixed(1) : Math.round(dist)} km` : ''}`;
     if (state.online && !state.online.meId) {
       const me = document.createElement('button');
       me.type = 'button';
@@ -792,6 +795,7 @@ function renderConvoy() {
       li.append(me);
     }
     li.onclick = () => {
+      if (p.offline) return;
       state.followPeer = p.id;
       state.follow = true;
       $('btn-recenter').classList.remove('hidden');

@@ -112,10 +112,20 @@ if (args.ask && !convoy.config.room && process.stdin.isTTY) {
 onRouteChange = (route) => convoy.onRoute(route);
 const SITE = String(args.site ?? 'https://ets.enorme.bid').replace(/\/+$/, '');
 
+// Console hints for whoever runs this window (friends included).
+let gameSeen = false;
+setInterval(() => {
+  if (gameSeen && Date.now() - lastPacketAt > 10000) { gameSeen = false; console.log('[jeu] plus de données du jeu (ETS2 fermé ?)'); }
+}, 5000).unref();
+setTimeout(() => {
+  if (!packetCount) console.log('[jeu] rien reçu d\'ETS2 pour l\'instant : lance le jeu (plugin installé avec « 1 - Installer le plugin », OK sur le message SDK).');
+}, 60000).unref();
+
 function onTelemetry(text, source = 'udp') {
   let obj;
   try { obj = JSON.parse(text); } catch { return; }
   if (!obj || obj.v !== 1) return;
+  if (!gameSeen) { gameSeen = true; console.log('[jeu] ETS2 connecté, télémétrie reçue'); }
   obj.src = source;
   latest = obj;
   latestRaw = JSON.stringify(obj);
