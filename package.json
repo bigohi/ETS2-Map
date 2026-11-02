@@ -1,0 +1,22 @@
+{
+  "name": "ets2-map",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Euro Truck Simulator 2 live map on your phone: own SCS telemetry plugin, LAN server, phone web app.",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "sim": "node server/sim.js",
+    "map": "node tools/map/pipeline.mjs all",
+    "map:setup": "node tools/map/pipeline.mjs setup",
+    "map:parse": "node tools/map/pipeline.mjs parse",
+    "map:bake": "node tools/map/pipeline.mjs bake",
+    "plugin:build": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/build.ps1",
+    "plugin:test": "plugin\\build\\harness.exe plugin\\build\\ets2map_telemetry.dll",
+    "plugin:install": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/install.ps1",
+    "plugin:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/install.ps1 -Uninstall"
+  },
+  "dependencies": {
+    "qrcode-terminal": "^0.12.0"
+  }
+}

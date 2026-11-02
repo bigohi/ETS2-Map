@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#16191d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ETS2 Map">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <link rel="stylesheet" href="css/app.css">
+  <title>ETS2 Map</title>
+</head>
+<body class="theme-dark">
+  <canvas id="map"></canvas>
+
+  <!-- Job / navigation card -->
+  <section id="job" class="card hidden" aria-live="polite">
+    <div class="job-line1"><span id="job-title">—</span></div>
+    <div class="job-line2" id="job-sub"></div>
+    <div class="job-stats">
+      <div><span class="k">Distance</span><span id="nav-dist" class="v">—</span></div>
+      <div><span class="k">Trajet</span><span id="nav-time" class="v">—</span></div>
+      <div><span class="k">Arrivée</span><span id="nav-eta" class="v">—</span></div>
+      <div id="deadline-box"><span class="k">Délai</span><span id="deadline" class="v">—</span></div>
+    </div>
+  </section>
+
+  <!-- Status banner -->
+  <div id="banner" class="banner">Connexion…</div>
+
+  <!-- Speed cluster -->
+  <section id="speed" class="card">
+    <div class="speed-main"><span id="speed-val">0</span><span class="unit">km/h</span></div>
+    <div class="speed-side">
+      <div id="limit" class="limit hidden"><span id="limit-val">90</span></div>
+      <div id="cruise" class="cruise hidden">CC <span id="cruise-val">0</span></div>
+      <div id="gear" class="gear">N</div>
+    </div>
+  </section>
+
+  <!-- Bottom info strip -->
+  <section id="info" class="card">
+    <div class="info-item" title="Carburant">
+      <svg viewBox="0 0 24 24" class="ico"><path d="M5 3h8a1 1 0 0 1 1 1v7h1a2 2 0 0 1 2 2v4a1 1 0 0 0 2 0V9.4l-2.7-2.7 1.4-1.4L21 7.6V17a3 3 0 0 1-6 0v-4h-1v7H4V4a1 1 0 0 1 1-1zm1 2v5h6V5H6z"/></svg>
+      <div class="fuel-wrap"><div id="fuel-bar" class="fuel-bar"></div></div>
+      <span id="fuel-val">—</span>
+    </div>
+    <div class="info-item" title="Prochaine pause">
+      <svg viewBox="0 0 24 24" class="ico"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm-1 3v6.2l5 3 1-1.7-4-2.4V7z"/></svg>
+      <span id="rest-val">—</span>
+    </div>
+    <div class="info-item" title="Heure du jeu">
+      <svg viewBox="0 0 24 24" class="ico"><path d="M7 2h2v2h6V2h2v2h3a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h3V2zm12 8H5v9h14v-9z"/></svg>
+      <span id="clock-val">—</span>
+    </div>
+  </section>
+
+  <!-- Map controls -->
+  <nav id="controls">
+    <button id="btn-zoom-in" class="btn" aria-label="Zoom avant">+</button>
+    <button id="btn-zoom-out" class="btn" aria-label="Zoom arrière">−</button>
+    <button id="btn-rotate" class="btn" aria-label="Orientation">
+      <svg viewBox="0 0 24 24" id="compass"><path d="M12 2l4 10h-8z" class="n"/><path d="M12 22l-4-10h8z" class="s"/></svg>
+    </button>
+    <button id="btn-fit" class="btn" aria-label="Vue d'ensemble">
+      <svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z"/></svg>
+    </button>
+    <button id="btn-menu" class="btn" aria-label="Réglages">
+      <svg viewBox="0 0 24 24"><path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z"/></svg>
+    </button>
+  </nav>
+  <button id="btn-recenter" class="pill hidden">
+    <svg viewBox="0 0 24 24"><path d="M12 2l7 19-7-4-7 4z"/></svg> Recentrer
+  </button>
+
+  <!-- Settings sheet -->
+  <dialog id="settings">
+    <form method="dialog">
+      <h2>Réglages</h2>
+      <label><input type="checkbox" id="set-night" checked> Thème nuit</label>
+      <label><input type="checkbox" id="set-pois" checked> Stations, parkings, garages…</label>
+      <label><input type="checkbox" id="set-companies" checked> Logos des entreprises</label>
+      <label><input type="checkbox" id="set-shields" checked> Numéros de routes</label>
+      <label><input type="checkbox" id="set-trail" checked> Trace parcourue</label>
+      <label><input type="checkbox" id="set-autozoom" checked> Zoom selon la vitesse</label>
+      <label><input type="checkbox" id="set-awake" checked> Garder l'écran allumé</label>
+      <div class="row">
+        <button type="button" id="btn-fullscreen">Plein écran</button>
+        <button type="button" id="btn-clear-trail">Effacer la trace</button>
+      </div>
+      <p class="about" id="about"></p>
+      <button value="close" class="primary">Fermer</button>
+    </form>
+  </dialog>
+
+  <video id="keepawake" muted playsinline loop hidden></video>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
