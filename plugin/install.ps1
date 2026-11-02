@@ -9,9 +9,17 @@ $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $here
 
-if (-not $GameDir) { $GameDir = (node "$root\tools\game-dir.mjs").Trim() }
+if (-not $GameDir) {
+  $found = node "$root\tools\game-dir.mjs" 2>$null
+  if ($found -and "$found".Trim() -ne 'not found') { $GameDir = "$found".Trim() }
+}
 if (-not $GameDir -or -not (Test-Path (Join-Path $GameDir 'base.scs'))) {
-  throw "Euro Truck Simulator 2 introuvable. Relance avec -GameDir 'D:\...\Euro Truck Simulator 2'"
+  Write-Host "Dossier d'Euro Truck Simulator 2 introuvable automatiquement."
+  Write-Host "Dans Steam : clic droit sur Euro Truck Simulator 2 > Gérer > Parcourir les fichiers locaux, puis copie l'adresse du dossier."
+  $GameDir = (Read-Host "Colle le dossier du jeu ici").Trim().Trim('"')
+}
+if (-not $GameDir -or -not (Test-Path (Join-Path $GameDir 'base.scs'))) {
+  throw "Pas de base.scs dans '$GameDir' : ce n'est pas le dossier d'Euro Truck Simulator 2."
 }
 $plugins = Join-Path $GameDir 'bin\win_x64\plugins'
 $target = Join-Path $plugins 'ets2map_telemetry.dll'
