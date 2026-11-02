@@ -4,7 +4,7 @@
 //  - serves the phone web app (web/) and the baked map (data/map/)
 //  - pushes live telemetry to phones over Server-Sent Events (/api/stream)
 //
-// Usage: node server/server.js [--port 8080] [--udp 30210] [--convoy <room> --name <name>]
+// Usage: node server/server.js [--port 8765] [--udp 30210] [--convoy <room> --name <name>]
 //                              [--record file.ndjson] [--replay file.ndjson] [--config data/config.json]
 
 import http from 'node:http';
@@ -23,7 +23,10 @@ const WEB_DIR = path.join(ROOT, 'web');
 const MAP_DIR = path.join(ROOT, 'data', 'map');
 
 const args = parseArgs(process.argv.slice(2));
-const HTTP_PORT = Number(args.port ?? process.env.ETS2MAP_HTTP_PORT ?? 8080);
+// 8765, not 8080: 8080 is qBittorrent's Web UI (and many other tools).
+const PORT_FIXED = args.port != null || process.env.ETS2MAP_HTTP_PORT != null;
+const HTTP_PORT = Number(args.port ?? process.env.ETS2MAP_HTTP_PORT ?? 8765);
+let httpPort = HTTP_PORT;
 const UDP_PORT = Number(args.udp ?? process.env.ETS2MAP_PORT ?? 30210);
 const UDP_HOST = args['udp-host'] ?? '127.0.0.1';
 const OFFLINE_AFTER_MS = 3000;
@@ -310,17 +313,27 @@ const server = http.createServer((req, res) => {
 });
 
 server.on('error', (err) => {
+  // Port taken by another app: take the next free one rather than giving up.
+  if (err.code === 'EADDRINUSE' && !PORT_FIXED && httpPort < HTTP_PORT + 10) {
+    console.log(`Port ${httpPort} déjà utilisé par un autre programme, essai du ${httpPort + 1}…`);
+    httpPort++;
+    setTimeout(() => server.listen(httpPort, '0.0.0.0'), 100);
+    return;
+  }
   console.error(`HTTP error: ${err.message}`);
-  if (err.code === 'EADDRINUSE') console.error(`Port ${HTTP_PORT} is busy, try --port 8081`);
+  if (err.code === 'EADDRINUSE') console.error(`Port ${httpPort} is busy, try --port ${httpPort + 1}`);
   process.exit(1);
 });
 
-server.listen(HTTP_PORT, '0.0.0.0', async () => {
-  const urls = lanAddresses().map((a) => `http://${a.address}:${HTTP_PORT}/`);
+server.on('listening', onListening);
+server.listen(httpPort, '0.0.0.0');
+
+async function onListening() {
+  const urls = lanAddresses().map((a) => `http://${a.address}:${httpPort}/`);
   console.log('');
   console.log('ETS2-Map is running. Open this on your phone (same Wi-Fi):');
   for (const u of urls) console.log(`  ${u}`);
-  console.log(`  (on this PC: http://localhost:${HTTP_PORT}/)`);
+  console.log(`  (on this PC: http://localhost:${httpPort}/)`);
   if (!fs.existsSync(path.join(MAP_DIR, 'meta.json'))) {
     console.log('\nNo map data yet: run "npm run map" once (see README).');
   }
@@ -338,7 +351,7 @@ server.listen(HTTP_PORT, '0.0.0.0', async () => {
       qr.generate(qrUrl, { small: true }, (code) => console.log(`\n${onlineUrl ? 'QR = online link' : 'QR = Wi-Fi link'}\n${code}`));
     } catch { /* qrcode-terminal not installed: the URL is enough */ }
   }
-});
+}
 
 // LAN IPv4 addresses, the physical ones (Wi-Fi/Ethernet) first.
 function lanAddresses() {

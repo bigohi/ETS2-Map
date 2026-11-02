@@ -25,7 +25,7 @@ flowchart LR
 
 ## Utilisation
 
-1. Double-clique **`ETS2-Map.cmd`** (ou `npm start`). La fenêtre affiche l'adresse et un QR code, par exemple `http://192.168.1.7:8080/`.
+1. Double-clique **`ETS2-Map.cmd`** (ou `npm start`). La fenêtre affiche l'adresse et un QR code, par exemple `http://192.168.1.7:8765/`.
 2. Sur le téléphone, connecté au même Wi-Fi, ouvre cette adresse.
    Ajoute-la à l'écran d'accueil : elle s'ouvre alors en plein écran comme une appli.
 3. Lance ETS2. Au premier démarrage avec le plugin, le jeu affiche un message sur les « fonctions SDK avancées » : clique **OK**.
@@ -65,7 +65,7 @@ Tout le convoi peut ouvrir **https://ets.enorme.bid** en même temps, depuis n'i
 - En HTTPS, l'écran reste allumé (Wake Lock) et le site s'ajoute à l'écran d'accueil.
 - Mise à jour du site : `npm run site:deploy` (projet Vercel `ets2-map`, domaine `ets.enorme.bid`, DNS : CNAME `ets` chez Cloudflare, proxy désactivé).
 
-Le mode Wi-Fi (`http://<IP du PC>:8080`) reste disponible : 20 mises à jour/s au lieu de 4, sans Internet.
+Le mode Wi-Fi (`http://<IP du PC>:8765`) reste disponible : 20 mises à jour/s au lieu de 4, sans Internet.
 
 ## Pack pour les potes
 
@@ -107,7 +107,7 @@ Tests : `npm run test:route` (itinéraires depuis Calais vers 10 villes) et `npm
 
 | Option | Défaut | |
 |---|---|---|
-| `--port` | 8080 | port HTTP pour le téléphone |
+| `--port` | 8765 | port HTTP pour le téléphone (pris ? le suivant libre jusqu'à 8775 ; 8080 est évité car c'est celui de qBittorrent) |
 | `--udp` | 30210 | port UDP du plugin (côté jeu : variable d'environnement `ETS2MAP_PORT`) |
 | `--no-qr` | | pas de QR code |
 | `--convoy`, `--name` | | rejoindre un convoi au démarrage |
@@ -119,7 +119,7 @@ Tests : `npm run test:route` (itinéraires depuis Calais vers 10 villes) et `npm
 ## Hors de chez toi / écran toujours allumé
 
 Le navigateur ne peut garder l'écran allumé de façon fiable qu'en HTTPS. L'appli tente un contournement en HTTP, sans garantie : sinon règle la mise en veille du téléphone.
-Avec Tailscale (déjà installé sur ce PC) : `tailscale serve --bg 8080` donne une adresse `https://<pc>.<tailnet>.ts.net` qui marche aussi en 4G et active le maintien de l'écran.
+Avec Tailscale (déjà installé sur ce PC) : `tailscale serve --bg 8765` donne une adresse `https://<pc>.<tailnet>.ts.net` qui marche aussi en 4G et active le maintien de l'écran.
 
 ## Désinstaller
 

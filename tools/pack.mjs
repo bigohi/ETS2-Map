@@ -73,7 +73,7 @@ fs.writeFileSync(path.join(OUT, 'LISEZ-MOI.txt'), `ETS2 Map - convoi
    deja configure (marche partout, meme en 4G).
 5. Sans QR : ouvre https://ets.enorme.bid, bouton "Convoi" (2 personnes),
    meme pseudo et meme code que sur le PC.
-   (Sur le meme Wi-Fi, l'adresse http://<IP du PC>:8080 marche aussi.)
+   (Sur le meme Wi-Fi, l'adresse http://<IP du PC>:8765 marche aussi.)
 6. Lance ETS2. Au premier lancement, clique OK sur le message "SDK".
 
 Sur la carte : itineraire en rouge, potes en couleur avec leur pseudo,
