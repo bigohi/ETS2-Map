@@ -27,6 +27,11 @@ const HZ = 20;
 
 const meta = JSON.parse(fs.readFileSync(path.join(MAP_DIR, 'meta.json'), 'utf8'));
 const Q = meta.q;
+// Company names as the game sends them ("БЛТ" for blt_ru), when the parsed
+// game data is around; the token in capitals otherwise.
+const CO_DEFS = path.join(MAP_DIR, '..', 'parsed', 'europe-companyDefs.json');
+const coNames = fs.existsSync(CO_DEFS) ? new Map(Object.values(JSON.parse(fs.readFileSync(CO_DEFS, 'utf8'))).map((c) => [c.token, c.name])) : new Map();
+const coName = (token) => coNames.get(token) ?? token.toUpperCase();
 
 // ---------------------------------------------------------------------------
 // Highway graph from detail tiles.
@@ -198,8 +203,8 @@ setInterval(() => {
     job: {
       mass: 21300, income, deliv: startGt + 60 * 9, km: Math.round(length / 1000 * 4.5), special: false,
       cargo: 'Pièces automobiles', cargoId: 'car_parts',
-      src: meta.cityNames[FROM] ?? FROM, srcId: FROM, srcCo: srcCo.toUpperCase(), srcCoId: srcCo,
-      dst: meta.cityNames[dstCity] ?? dstCity, dstId: dstCity, dstCo: dstCo.toUpperCase(), dstCoId: dstCo, market: 'freight_market',
+      src: meta.cityNames[FROM] ?? FROM, srcId: FROM, srcCo: coName(srcCo), srcCoId: srcCo,
+      dst: meta.cityNames[dstCity] ?? dstCity, dstId: dstCity, dstCo: coName(dstCo), dstCoId: dstCo, market: 'freight_market',
     },
   };
   sock.send(JSON.stringify(pkt), PORT, '127.0.0.1');

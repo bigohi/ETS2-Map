@@ -99,7 +99,7 @@ npm run sim -- --from berlin --speed 90
 npm run sim -- --from calais --to lyon   # suit l'itinéraire calculé vers une entreprise de Lyon
 ```
 
-Tests : `npm run test:route` (itinéraires depuis Calais vers 10 villes) et `npm run test:convoy` (deux convois sur les vrais brokers, chiffrement, départ, panne de broker).
+Tests : `npm run test:route` (itinéraires depuis Calais vers 10 villes) `npm run test:convoy` (deux convois sur les vrais brokers, chiffrement, départ, panne de broker) et `npm run test:latin` (noms d'entreprises russes, bulgares et grecs du jeu en lettres latines).
 
 `node server/server.js --record trajet.ndjson` enregistre une vraie session, `--replay trajet.ndjson` la rejoue.
 

@@ -21,7 +21,8 @@
     "plugin:build": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/build.ps1",
     "plugin:test": "plugin\\build\\harness.exe plugin\\build\\ets2map_telemetry.dll",
     "plugin:install": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/install.ps1",
-    "plugin:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/install.ps1 -Uninstall"
+    "plugin:uninstall": "powershell -NoProfile -ExecutionPolicy Bypass -File plugin/install.ps1 -Uninstall",
+    "test:latin": "node tools/latin-test.mjs"
   },
   "dependencies": {
     "qrcode-terminal": "^0.12.0"

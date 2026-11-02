@@ -5,6 +5,7 @@ import { RouteView } from './route.js';
 import { ConvoyView } from './convoy.js';
 import { WebConvoy } from './mqtt-ws.js';
 import { countryFr } from './countries.js';
+import { latin, hasForeign } from './latin.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -159,6 +160,9 @@ let roadScale = 19;
 const toReal = (gameMinutes) => gameMinutes / roadScale;
 const fmtReal = (date) => `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 function setReal(id, text) { $(id).textContent = text ?? ''; }
+// A city name in Cyrillic or Greek (a friend's game in another language) takes
+// our map's name; company names from the game are transliterated (latin.js).
+const cityName = (name, id) => (hasForeign(name) ? store.meta?.cityNames?.[id] ?? latin(name) : name);
 
 // The real clock ticks on its own, game or not.
 setInterval(() => { setReal('clock-real', `${fmtReal(new Date())} réel`); if (state.telemetry) updateHud(); }, 1000);
@@ -199,14 +203,14 @@ function updateHud() {
   const hasNav = t.nd > 1 || ownRoute;
   $('job').classList.toggle('hidden', !job && !hasNav);
   if (job) {
-    $('job-title').textContent = `${job.dst}${job.dstCo ? ' · ' + job.dstCo : ''}`;
-    const parts = [job.cargo];
+    $('job-title').textContent = `${cityName(job.dst, job.dstId)}${job.dstCo ? ' · ' + latin(job.dstCo) : ''}`;
+    const parts = [latin(job.cargo)];
     if (job.mass) parts.push(`${(job.mass / 1000).toFixed(1).replace('.0', '')} t`);
     if (job.income) parts.push(fmtMoney(job.income));
-    if (job.src) parts.push(`depuis ${job.src}`);
+    if (job.src) parts.push(`depuis ${cityName(job.src, job.srcId)}`);
     $('job-sub').textContent = parts.filter(Boolean).join(' · ');
   } else {
-    $('job-title').textContent = route.target?.label ?? 'Itinéraire GPS';
+    $('job-title').textContent = latin(route.target?.label) ?? 'Itinéraire GPS';
     $('job-sub').textContent = ownRoute ? 'Itinéraire calculé par ETS2 Map' : '';
   }
   if (ownRoute) {
@@ -802,12 +806,12 @@ function renderConvoy() {
     // Trip, country to country: "Calais (France) → Berlin (Allemagne)".
     const where = (city, token) => {
       const c = countryFr(store.meta?.cityCountry?.[token]);
-      return city ? `${city}${c ? ` (${c})` : ''}` : c;
+      return city ? `${cityName(city, token)}${c ? ` (${c})` : ''}` : c;
     };
     const trip = p.offline ? (WHY[s.why] ?? 'ETS2 Map lancé, pas encore sur la route')
       : s.job ? `${where(s.job.src, s.job.srcId)} → ${where(s.job.dst, s.job.dstId)}` : 'Conduite libre';
     const stats = p.offline ? 'hors jeu'
-      : [`${Math.round(Math.abs(s.spd ?? 0) * 3.6)} km/h`, dist != null ? `à ${dist < 10 ? dist.toFixed(1) : Math.round(dist)} km` : null, s.paused ? 'en pause' : null, s.job?.cargo].filter(Boolean).join(' · ');
+      : [`${Math.round(Math.abs(s.spd ?? 0) * 3.6)} km/h`, dist != null ? `à ${dist < 10 ? dist.toFixed(1) : Math.round(dist)} km` : null, s.paused ? 'en pause' : null, latin(s.job?.cargo)].filter(Boolean).join(' · ');
     li.innerHTML = `<span class="dot"></span><div class="who"><b></b><small class="trip"></small><small class="stats"></small></div><div class="acts"></div>`;
     li.querySelector('.dot').style.background = p.color;
     li.querySelector('b').textContent = p.name;
