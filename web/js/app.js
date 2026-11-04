@@ -50,6 +50,7 @@ const state = {
   samples: [],             // [{t, x, y, h, spd}] for interpolation
   truck: null,             // interpolated {x, y, h}
   follow: true,
+  overview: false,         // fit view (always flat)
   trail: JSON.parse(sessionStorage.getItem('ets2map.trail') || '[]'),
   dest: null, source: null, jobKey: '',
   mapError: null,
@@ -307,7 +308,8 @@ function updateCamera(now) {
     view.rot = approachAngle(view.rot, 0, dt, 8);
   }
   $('compass').style.transform = `rotate(${(view.rot * 180) / Math.PI}deg)`;
-  const tilt = settings.view3d && state.follow ? TILT_3D : 0;
+  // 3D stays on while panning; only the overview is flat (it fits a bbox).
+  const tilt = settings.view3d && !state.overview ? TILT_3D : 0;
   if (view.tilt !== tilt) {
     view.tilt += (tilt - view.tilt) * Math.min(1, dt * 7);
     if (Math.abs(tilt - view.tilt) < 0.002) view.tilt = tilt;
@@ -327,6 +329,7 @@ function approachAngle(cur, target, dt, speed) {
 function setFollow(on) {
   state.follow = on;
   if (!on) state.followPeer = null;
+  if (on) state.overview = false;
   $('btn-recenter').classList.toggle('hidden', on);
   if (on) state.smoothScale = view.scale;
   dirty = true;
@@ -337,10 +340,12 @@ function zoomAt(factor, px, py) {
     settings.zoomBias = Math.max(-6, Math.min(3, settings.zoomBias + Math.log2(factor)));
     saveSettings();
   } else {
-    const [wx, wy] = view.toWorld(px ?? view.w / 2, py ?? view.h / 2);
+    // Buttons zoom around the anchor (screen center, or the truck spot in 3D).
+    px ??= view.ax * view.w; py ??= view.ay * view.h;
+    const [wx, wy] = view.toWorld(px, py);
     view.scale = clampScale(view.scale * factor);
     // keep (wx, wy) under the finger
-    const [nx, ny] = view.toWorld(px ?? view.w / 2, py ?? view.h / 2);
+    const [nx, ny] = view.toWorld(px, py);
     view.cx += wx - nx;
     view.cy += wy - ny;
   }
@@ -360,6 +365,7 @@ function fitOverview() {
   for (const p of peers) pts.push([p.x, p.y]);
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   setFollow(false);
+  state.overview = true;
   computeInsets();
   // Fit into the part of the screen not covered by the HUD.
   const ins = view.insets;
@@ -445,9 +451,12 @@ surface.addEventListener('pointermove', (e) => {
     if (!gesture.moved) {
       gesture.moved = true;
       if (state.follow) {
-        // Leave follow mode where we are, anchored at screen center.
-        const [cx, cy] = view.toWorld(view.w / 2, view.h / 2);
-        view.cx = cx; view.cy = cy; view.ax = 0.5; view.ay = 0.5;
+        // Leave follow mode where we are. Flat: anchored at screen center.
+        // Tilted: keep the anchor, moving it would change the perspective.
+        if (!view.tilt) {
+          const [cx, cy] = view.toWorld(view.w / 2, view.h / 2);
+          view.cx = cx; view.cy = cy; view.ax = 0.5; view.ay = 0.5;
+        }
         setFollow(false);
       }
       gesture.world = view.toWorld(x, y);
@@ -515,7 +524,7 @@ $('btn-3d').onclick = () => set3d(!settings.view3d);
 function set3d(on) {
   settings.view3d = on;
   // A tilted map only makes sense facing the road.
-  if (on) { settings.headingUp = true; if (!state.follow) setFollow(true); }
+  if (on) { settings.headingUp = true; if (state.overview) setFollow(true); }
   saveSettings();
   $('btn-3d').textContent = on ? '2D' : '3D';
   $('btn-3d').setAttribute('aria-label', on ? 'Vue 2D' : 'Vue 3D');
@@ -632,7 +641,7 @@ function frame(now) {
   const moving = (state.samples.length && !state.telemetry?.paused) || peers.length > 0;
   updateCamera(now);
   if (dirty || moving || gesture || renderer.needsRedraw) {
-    renderer.layout(view, (settings.view3d && state.follow) || view.tilt ? TILT_3D : 0);
+    renderer.layout(view, (settings.view3d && !state.overview) || view.tilt ? TILT_3D : 0);
     renderer.draw(view, {
       truck: state.truck,
       trail: state.trail,

@@ -30,7 +30,7 @@ flowchart LR
    Ajoute-la à l'écran d'accueil : elle s'ouvre alors en plein écran comme une appli.
 3. Lance ETS2. Au premier démarrage avec le plugin, le jeu affiche un message sur les « fonctions SDK avancées » : clique **OK**.
 
-Boutons à droite : zoom, boussole (bascule « cap en haut » / « nord en haut »), 3D/2D (vue inclinée comme un GPS, quand la carte suit le camion), vue d'ensemble (camion + destination), réglages.
+Boutons à droite : zoom, boussole (bascule « cap en haut » / « nord en haut »), 3D/2D (vue inclinée comme un GPS, gardée quand on déplace la carte ; à plat seulement en vue d'ensemble), vue d'ensemble (camion + destination), réglages.
 Dès que tu déplaces la carte, le suivi s'arrête : **Recentrer** le remet.
 
 ## Itinéraire en rouge
