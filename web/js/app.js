@@ -12,7 +12,7 @@ const $ = (id) => document.getElementById(id);
 // ---------------------------------------------------------------------------
 // Settings (persisted).
 
-const DEFAULTS = { hiddenRoutes: [], peerRoutes: true, route: true, night: true, pois: true, companies: true, shields: true, trail: true, autozoom: true, awake: true, headingUp: true, zoomBias: 0 };
+const DEFAULTS = { hiddenRoutes: [], peerRoutes: true, route: true, night: true, pois: true, companies: true, shields: true, trail: true, autozoom: true, awake: true, headingUp: true, view3d: false, zoomBias: 0 };
 const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('ets2map.settings') || '{}') };
 const saveSettings = () => localStorage.setItem('ets2map.settings', JSON.stringify(settings));
 
@@ -21,7 +21,11 @@ const saveSettings = () => localStorage.setItem('ets2map.settings', JSON.stringi
 
 const canvas = $('map');
 const store = new MapStore('map/');
-const renderer = new Renderer(canvas, store);
+// Gestures land on the overlay: always screen-sized, even when the map is tilted.
+const surface = $('overlay');
+const renderer = new Renderer(canvas, surface, store);
+// 3D view: map tilted back like a car GPS, only while following the truck.
+const TILT_3D = 1.0; // radians (57°)
 const view = new View();
 const route = new RouteView();
 const convoy = new ConvoyView();
@@ -290,18 +294,27 @@ function updateCamera(now) {
     // Landscape: the job card sits on the left, so keep the truck right of center.
     const landscape = view.w > view.h * 1.2;
     view.ax = landscape ? 0.62 : 0.5;
-    view.ay = settings.headingUp ? (landscape ? 0.7 : 0.66) : 0.52;
+    // 3D: the truck sits lower, there is more road to see ahead.
+    view.ay = settings.view3d ? (landscape ? 0.78 : 0.76) : settings.headingUp ? (landscape ? 0.7 : 0.66) : 0.52;
     const targetRot = settings.headingUp ? truck.h * Math.PI * 2 : 0;
     view.rot = approachAngle(view.rot, targetRot, dt, 6);
     const kmh = Math.abs(state.telemetry?.spd ?? 0) * 3.6;
     const base = settings.autozoom ? autoScale(kmh, Math.min(view.w, view.h)) : Math.min(view.w, view.h) / 600;
-    const target = base * Math.pow(2, settings.zoomBias);
+    const target = base * Math.pow(2, settings.zoomBias) * (settings.view3d ? 1.3 : 1);
     state.smoothScale = state.smoothScale == null ? target : state.smoothScale + (target - state.smoothScale) * Math.min(1, dt * 1.2);
     view.scale = state.smoothScale;
   } else if (!settings.headingUp && view.rot !== 0) {
     view.rot = approachAngle(view.rot, 0, dt, 8);
   }
   $('compass').style.transform = `rotate(${(view.rot * 180) / Math.PI}deg)`;
+  const tilt = settings.view3d && state.follow ? TILT_3D : 0;
+  if (view.tilt !== tilt) {
+    view.tilt += (tilt - view.tilt) * Math.min(1, dt * 7);
+    if (Math.abs(tilt - view.tilt) < 0.002) view.tilt = tilt;
+    dirty = true;
+  }
+  view.persp = view.h * 2;
+  view.horizon = 0.1;
 }
 function approachAngle(cur, target, dt, speed) {
   let d = target - cur;
@@ -368,8 +381,8 @@ function fitOverview() {
 const pointers = new Map();
 let gesture = null;
 let pressTimer = 0;
-canvas.addEventListener('pointerdown', (e) => {
-  canvas.setPointerCapture(e.pointerId);
+surface.addEventListener('pointerdown', (e) => {
+  try { surface.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
   pointers.set(e.pointerId, [e.clientX, e.clientY]);
   startGesture();
   clearTimeout(pressTimer);
@@ -383,7 +396,7 @@ canvas.addEventListener('pointerdown', (e) => {
     }, 600);
   }
 });
-canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); setDestination(...view.toWorld(e.clientX, e.clientY)); });
+surface.addEventListener('contextmenu', (e) => { e.preventDefault(); setDestination(...view.toWorld(e.clientX, e.clientY)); });
 
 async function setDestination(x, y) {
   navigator.vibrate?.(30);
@@ -421,7 +434,7 @@ function toast(text, action, onAction) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.add('hidden'), 4000);
 }
-canvas.addEventListener('pointermove', (e) => {
+surface.addEventListener('pointermove', (e) => {
   if (!pointers.has(e.pointerId)) return;
   pointers.set(e.pointerId, [e.clientX, e.clientY]);
   if (!gesture) return;
@@ -471,8 +484,8 @@ const endPointer = (e) => {
   startGesture();
 };
 let lastTap = { t: 0, x: 0, y: 0 };
-canvas.addEventListener('pointerup', endPointer);
-canvas.addEventListener('pointercancel', endPointer);
+surface.addEventListener('pointerup', endPointer);
+surface.addEventListener('pointercancel', endPointer);
 function startGesture() {
   const pts = [...pointers.values()];
   if (!pts.length) { gesture = null; return; }
@@ -482,7 +495,7 @@ function startGesture() {
     gesture = { n: 2, d: Math.max(10, Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1])), mx, my, moved: true };
   }
 }
-canvas.addEventListener('wheel', (e) => {
+surface.addEventListener('wheel', (e) => {
   e.preventDefault();
   zoomAt(Math.pow(2, -e.deltaY / 400), e.clientX, e.clientY);
 }, { passive: false });
@@ -498,6 +511,19 @@ $('btn-rotate').onclick = () => {
   if (settings.headingUp && !state.follow) setFollow(true);
   dirty = true;
 };
+$('btn-3d').onclick = () => set3d(!settings.view3d);
+function set3d(on) {
+  settings.view3d = on;
+  // A tilted map only makes sense facing the road.
+  if (on) { settings.headingUp = true; if (!state.follow) setFollow(true); }
+  saveSettings();
+  $('btn-3d').textContent = on ? '2D' : '3D';
+  $('btn-3d').setAttribute('aria-label', on ? 'Vue 2D' : 'Vue 3D');
+  $('set-3d').checked = on;
+  dirty = true;
+}
+$('set-3d').onchange = (e) => set3d(e.target.checked);
+set3d(settings.view3d);
 $('btn-fit').onclick = () => fitOverview();
 $('btn-recenter').onclick = () => { state.followPeer = null; setFollow(true); updateRecenter(); };
 // The pill says what it does: back to me when following a friend.
@@ -606,6 +632,7 @@ function frame(now) {
   const moving = (state.samples.length && !state.telemetry?.paused) || peers.length > 0;
   updateCamera(now);
   if (dirty || moving || gesture || renderer.needsRedraw) {
+    renderer.layout(view, (settings.view3d && state.follow) || view.tilt ? TILT_3D : 0);
     renderer.draw(view, {
       truck: state.truck,
       trail: state.trail,

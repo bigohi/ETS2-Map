@@ -38,7 +38,9 @@ html, body {
   overscroll-behavior: none; touch-action: none;
   user-select: none; -webkit-user-select: none;
 }
-canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; }
+canvas#map { position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; }
+/* Labels and markers over the (possibly tilted) map; takes the gestures. */
+canvas#overlay { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; touch-action: none; }
 
 .hidden { display: none !important; }
 
@@ -143,6 +145,7 @@ canvas#map { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100
 #compass .n { fill: var(--danger); }
 #compass .s { fill: var(--muted); }
 .btn.on { outline: 2px solid var(--accent); }
+.btn.txt { font-size: 16px; font-weight: 800; letter-spacing: 0.5px; }
 
 .pill {
   position: fixed; left: 50%; transform: translateX(-50%);

@@ -74,39 +74,127 @@ export class View {
     this.rot = 0;                  // radians, world rotation on screen
     this.w = 1; this.h = 1;        // CSS px
     this.ax = 0.5; this.ay = 0.5;  // anchor of (cx, cy) on screen, fraction of w/h
+    // 3D view: the flat map canvas is tilted back by `tilt` (CSS perspective
+    // `persp` px, pivot on the anchor). The canvas is bigger than the screen
+    // then; (lox, loy) is the anchor inside it, lw x lh its size.
+    this.tilt = 0;
+    this.persp = 1000;
+    this.horizon = 0;              // 3D: top band hidden by the horizon, fraction of h
+    this.lw = 1; this.lh = 1; this.lox = 0.5; this.loy = 0.5;
   }
-  toScreen(x, y) {
+  /** World -> offset from the anchor on the flat map (CSS px). */
+  flat(x, y) {
     const c = Math.cos(this.rot), s = Math.sin(this.rot);
     const dx = (x - this.cx) * this.scale, dy = (y - this.cy) * this.scale;
-    return [this.w * this.ax + c * dx - s * dy, this.h * this.ay + s * dx + c * dy];
+    return [c * dx - s * dy, s * dx + c * dy];
+  }
+  fromFlat(fx, fy) {
+    const c = Math.cos(this.rot), s = Math.sin(this.rot);
+    return [this.cx + (c * fx + s * fy) / this.scale, this.cy + (-s * fx + c * fy) / this.scale];
+  }
+  /** Perspective factor of a flat offset: 1 at the anchor, < 1 farther away. */
+  depthAt(fy) {
+    return this.tilt ? 1 / Math.max(0.05, 1 - (fy * Math.sin(this.tilt)) / this.persp) : 1;
+  }
+  depth(x, y) { return this.depthAt(this.flat(x, y)[1]); }
+  /** World -> map canvas pixel (CSS px, before the tilt). */
+  toLocal(x, y) {
+    const [fx, fy] = this.flat(x, y);
+    return [this.lox + fx, this.loy + fy];
+  }
+  localToWorld(lx, ly) { return this.fromFlat(lx - this.lox, ly - this.loy); }
+  /** World -> screen (CSS px), through the tilt like the CSS transform does. */
+  toScreen(x, y) {
+    const [fx, fy] = this.flat(x, y);
+    const k = this.depthAt(fy);
+    return [this.w * this.ax + fx * k, this.h * this.ay + fy * Math.cos(this.tilt) * k];
   }
   toWorld(px, py) {
-    const c = Math.cos(this.rot), s = Math.sin(this.rot);
-    const dx = (px - this.w * this.ax) / this.scale, dy = (py - this.h * this.ay) / this.scale;
-    return [this.cx + c * dx + s * dy, this.cy - s * dx + c * dy];
+    const sx = px - this.w * this.ax, sy = py - this.h * this.ay;
+    if (!this.tilt) return this.fromFlat(sx, sy);
+    const sa = Math.sin(this.tilt) / this.persp;
+    const fy = sy / Math.max(0.05, Math.cos(this.tilt) + sy * sa); // above the horizon: clamp
+    return this.fromFlat(sx * (1 - fy * sa), fy);
   }
+  /** Screen rotation of an arrow drawn pointing up, for a world heading (radians). */
+  screenAngle(x, y, ang) {
+    if (!this.tilt) return this.rot - ang;
+    const d = 20 / this.scale;
+    const [x0, y0] = this.toScreen(x, y);
+    const [x1, y1] = this.toScreen(x - Math.sin(ang) * d, y - Math.cos(ang) * d);
+    return Math.atan2(y1 - y0, x1 - x0) + Math.PI / 2;
+  }
+  /** World bbox of the map canvas, plus a margin (CSS px). */
   bbox(marginPx = 0) {
-    const pts = [[-marginPx, -marginPx], [this.w + marginPx, -marginPx], [this.w + marginPx, this.h + marginPx], [-marginPx, this.h + marginPx]].map(([x, y]) => this.toWorld(x, y));
+    const m = marginPx;
+    const pts = [[-m, -m], [this.lw + m, -m], [this.lw + m, this.lh + m], [-m, this.lh + m]].map(([x, y]) => this.localToWorld(x, y));
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
     return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  }
+  /**
+   * Map canvas frame. Flat: the screen. Tilted: big enough to fill the screen
+   * at any tilt up to maxTilt (the far side spreads wider and higher).
+   */
+  layout(maxTilt) {
+    const { w, h, ax, ay } = this;
+    if (!maxTilt) { this.lw = w; this.lh = h; this.lox = w * ax; this.loy = h * ay; return; }
+    const ca = Math.cos(maxTilt), sa = Math.sin(maxTilt) / this.persp;
+    // Nothing to draw under the opaque horizon band.
+    const top = -(ay - this.horizon) * h, bottom = (1 - ay) * h;
+    const yTop = top / Math.max(0.05, ca + top * sa);
+    const yBottom = Math.max(bottom, bottom / (ca + bottom * sa));
+    const spread = 1 - yTop * sa; // widening of the top edge
+    const m = 8;
+    this.lox = ax * w * spread + m;
+    this.lw = w * spread + 2 * m;
+    this.loy = -yTop + m;
+    this.lh = this.loy + yBottom + m;
   }
 }
 
 export class Renderer {
-  constructor(canvas, store) {
+  /** canvas: the map (tilted in 3D); overlay: labels, icons and markers, never tilted. */
+  constructor(canvas, overlay, store) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+    this.overlay = overlay;
+    this.mapCtx = this.ctx = canvas.getContext('2d', { alpha: false });
+    this.octx = overlay.getContext('2d');
     this.store = store;
     this.dpr = 1;
+    this.mdpr = 1;
     this.theme = THEMES.dark;
+    this.frameKey = '';
   }
 
   resize() {
     this.dpr = Math.min(window.devicePixelRatio || 1, 2.5);
     const w = window.innerWidth, h = window.innerHeight;
-    this.canvas.width = Math.round(w * this.dpr);
-    this.canvas.height = Math.round(h * this.dpr);
+    this.overlay.width = Math.round(w * this.dpr);
+    this.overlay.height = Math.round(h * this.dpr);
+    this.frameKey = '';
     return [w, h];
+  }
+
+  /** Sizes and tilts the map canvas for this frame (see View.layout). */
+  layout(view, maxTilt) {
+    view.layout(maxTilt);
+    // The tilted canvas is several screens big: cap its resolution.
+    this.mdpr = maxTilt ? Math.min(this.dpr, 1.5) : this.dpr;
+    const key = [view.lw, view.lh, view.lox, view.loy, view.w, view.h, view.ax, view.ay, this.mdpr].map((n) => Math.round(n * 100)).join();
+    const st = this.canvas.style;
+    if (key !== this.frameKey) {
+      this.frameKey = key;
+      this.canvas.width = Math.round(view.lw * this.mdpr);
+      this.canvas.height = Math.round(view.lh * this.mdpr);
+      st.left = `${view.w * view.ax - view.lox}px`;
+      st.top = `${view.h * view.ay - view.loy}px`;
+      st.width = `${view.lw}px`;
+      st.height = `${view.lh}px`;
+      st.transformOrigin = `${view.lox}px ${view.loy}px`;
+      this.cache = null;
+    }
+    const tf = view.tilt ? `perspective(${view.persp}px) rotateX(${view.tilt}rad)` : 'none';
+    if (this.lastTf !== tf) { this.lastTf = tf; st.transform = tf; }
   }
 
   /**
@@ -115,12 +203,15 @@ export class Renderer {
    */
   draw(view, scene) {
     const { theme, store, dpr } = this;
-    const ctx = this.ctx;
+    const ctx = this.ctx = this.mapCtx;
     const q = store.q || 2;
     this.needsRedraw = false;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(this.mdpr, 0, 0, this.mdpr, 0, 0);
     ctx.fillStyle = theme.bg;
-    ctx.fillRect(0, 0, view.w, view.h);
+    ctx.fillRect(0, 0, view.lw, view.lh);
+    const o = this.octx;
+    o.setTransform(1, 0, 0, 1, 0, 0);
+    o.clearRect(0, 0, this.overlay.width, this.overlay.height);
     if (!store.meta) return;
 
     const bbox = view.bbox(40);
@@ -194,8 +285,10 @@ export class Renderer {
       ctx.setLineDash([]);
     }
 
-    // Screen-space layers.
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // Screen-space layers, on the overlay (upright even in 3D).
+    this.ctx = o;
+    o.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (view.tilt) this.drawHorizon(view);
     const placed = this.markerBoxes(view, scene);
     if (view.scale >= 0.06) this.drawPois(view, bbox, scene.opts, placed);
     this.drawLabels(view, placed);
@@ -206,13 +299,28 @@ export class Renderer {
     if (scene.dest && scene.truck) this.drawEdgeArrow(view, scene.dest, scene.truck, theme.dest, null);
     const me = scene.truck ?? { x: view.cx, y: view.cy };
     for (const peer of scene.peers ?? []) this.drawEdgeArrow(view, [peer.x, peer.y], me, peer.color, peer.name);
+    this.ctx = this.mapCtx;
+  }
+
+  /** 3D: the far side of the map fades out like a horizon. */
+  drawHorizon(view) {
+    const { ctx, theme } = this;
+    const k = Math.min(1, view.tilt / 0.6);
+    const solid = view.h * view.horizon * k, end = solid + view.h * 0.17 * k;
+    if (end < 1) return;
+    const g = ctx.createLinearGradient(0, 0, 0, end);
+    g.addColorStop(0, theme.bg);
+    g.addColorStop(solid / end, theme.bg);
+    g.addColorStop(1, hexAlpha(theme.bg, 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, view.w, end);
   }
 
   worldTransform(ctx, view, offX = 0, offY = 0) {
     const q = this.store.q || 2;
     const k = view.scale / q;
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    ctx.translate(view.w * view.ax + offX, view.h * view.ay + offY);
+    ctx.setTransform(this.mdpr, 0, 0, this.mdpr, 0, 0);
+    ctx.translate(view.lox + offX, view.loy + offY);
     ctx.rotate(view.rot);
     ctx.scale(k, k);
     ctx.translate(-view.cx * q, -view.cy * q);
@@ -260,22 +368,23 @@ export class Renderer {
   }
 
   drawCachedBase(view) {
-    const { dpr, store, theme } = this;
-    const margin = Math.round(Math.max(view.w, view.h) * 0.5);
+    const { store, theme } = this;
+    const dpr = this.mdpr;
+    const margin = Math.round(Math.max(view.lw, view.lh) * 0.5);
     let c = this.cache;
     // Where the cached center lands on screen now.
-    let off = c ? view.toScreen(c.cx, c.cy) : null;
+    let off = c ? view.toLocal(c.cx, c.cy) : null;
     const now = performance.now();
     if (view.scale !== this.lastScale) { this.lastScale = view.scale; this.lastScaleChange = now; }
-    const sameFrame = c && c.rot === view.rot && c.theme === theme && c.w === view.w && c.h === view.h && c.ax === view.ax && c.ay === view.ay;
+    const sameFrame = c && c.rot === view.rot && c.theme === theme && c.w === view.lw && c.h === view.lh && c.lox === view.lox && c.loy === view.loy;
     const valid = sameFrame && c.scale === view.scale && c.version === store.version &&
-      Math.abs(off[0] - view.w * view.ax) < margin * 0.9 && Math.abs(off[1] - view.h * view.ay) < margin * 0.9;
+      Math.abs(off[0] - view.lox) < margin * 0.9 && Math.abs(off[1] - view.loy) < margin * 0.9;
     // While a pinch/wheel zoom is in progress, stretch the old image instead of
     // re-rendering every frame; redraw sharp once the zoom settles.
     const ratio = c ? view.scale / c.scale : 1;
     if (!valid && sameFrame && now - this.lastScaleChange < 160 && ratio > 0.4 && ratio < 2.5) {
       const ctx = this.ctx;
-      const ax = c.margin + c.w * c.ax, ay = c.margin + c.h * c.ay;
+      const ax = c.margin + c.lox, ay = c.margin + c.loy;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.drawImage(this.cacheCanvas,
         (off[0] - ax * ratio) * dpr, (off[1] - ay * ratio) * dpr,
@@ -285,7 +394,7 @@ export class Renderer {
     }
     if (!valid) {
       if (!this.cacheCanvas) this.cacheCanvas = document.createElement('canvas');
-      const cw = Math.round((view.w + margin * 2) * dpr), ch = Math.round((view.h + margin * 2) * dpr);
+      const cw = Math.round((view.lw + margin * 2) * dpr), ch = Math.round((view.lh + margin * 2) * dpr);
       if (this.cacheCanvas.width !== cw || this.cacheCanvas.height !== ch) {
         this.cacheCanvas.width = cw;
         this.cacheCanvas.height = ch;
@@ -295,20 +404,19 @@ export class Renderer {
       cctx.clearRect(0, 0, cw, ch);
       // Same view, but with a margin all around.
       const big = Object.assign(Object.create(Object.getPrototypeOf(view)), view, {
-        w: view.w + margin * 2, h: view.h + margin * 2,
-        ax: (view.w * view.ax + margin) / (view.w + margin * 2),
-        ay: (view.h * view.ay + margin) / (view.h + margin * 2),
+        lw: view.lw + margin * 2, lh: view.lh + margin * 2,
+        lox: view.lox + margin, loy: view.loy + margin,
       });
       this.worldTransform(cctx, big);
       this.drawBase(cctx, big, big.bbox(20));
-      c = this.cache = { cx: view.cx, cy: view.cy, scale: view.scale, rot: view.rot, version: store.version, theme, w: view.w, h: view.h, ax: view.ax, ay: view.ay, margin };
-      off = view.toScreen(c.cx, c.cy);
+      c = this.cache = { cx: view.cx, cy: view.cy, scale: view.scale, rot: view.rot, version: store.version, theme, w: view.lw, h: view.lh, lox: view.lox, loy: view.loy, margin };
+      off = view.toLocal(c.cx, c.cy);
     }
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.drawImage(this.cacheCanvas,
-      Math.round((off[0] - view.w * view.ax - c.margin) * dpr),
-      Math.round((off[1] - view.h * view.ay - c.margin) * dpr));
+      Math.round((off[0] - view.lox - c.margin) * dpr),
+      Math.round((off[1] - view.loy - c.margin) * dpr));
   }
 
   /** Land, lakes and country borders under the roads. */
@@ -405,6 +513,7 @@ export class Renderer {
         else if (FACILITY_ICONS.has(p.icon) || p.type === 'facility') { if (!showFacilities) continue; size = 22; }
         else if (p.type === 'ferry' || p.type === 'train') { if (!showFacilities) continue; size = 22; }
         else continue;
+        if (view.tilt && view.depth(p.x, p.y) < 0.6) continue; // far side: clutter
         const [sx, sy] = view.toScreen(p.x, p.y);
         if (sx < -40 || sy < -40 || sx > view.w + 40 || sy > view.h + 40) continue;
         const img = store.icon(p.icon);
@@ -511,7 +620,7 @@ export class Renderer {
     ctx.save();
     ctx.translate(x, y);
     ctx.save();
-    ctx.rotate(view.rot - peer.h * Math.PI * 2);
+    ctx.rotate(view.screenAngle(peer.x, peer.y, peer.h * Math.PI * 2));
     ctx.beginPath();
     ctx.moveTo(0, -14);
     ctx.lineTo(10, 11);
@@ -545,7 +654,7 @@ export class Renderer {
     const ang = truck.h * Math.PI * 2;
     ctx.save();
     ctx.translate(x, y);
-    ctx.rotate(view.rot - ang);
+    ctx.rotate(view.screenAngle(truck.x, truck.y, ang));
     // Soft halo.
     ctx.beginPath();
     ctx.arc(0, 0, 22, 0, Math.PI * 2);
@@ -632,4 +741,10 @@ function roundRect(ctx, x, y, w, h, r) {
 function collides(placed, b) {
   for (const p of placed) if (b[0] < p[2] && b[2] > p[0] && b[1] < p[3] && b[3] > p[1]) return true;
   return false;
+}
+
+/** '#rrggbb' -> 'rgba(r,g,b,a)'. */
+function hexAlpha(hex, a) {
+  const n = parseInt(hex.slice(1, 7), 16);
+  return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`;
 }

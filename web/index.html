@@ -16,6 +16,7 @@
 </head>
 <body class="theme-dark">
   <canvas id="map"></canvas>
+  <canvas id="overlay"></canvas>
 
   <!-- Job / navigation card -->
   <section id="job" class="card hidden" aria-live="polite">
@@ -66,6 +67,7 @@
     <button id="btn-rotate" class="btn" aria-label="Orientation">
       <svg viewBox="0 0 24 24" id="compass"><path d="M12 2l4 10h-8z" class="n"/><path d="M12 22l-4-10h8z" class="s"/></svg>
     </button>
+    <button id="btn-3d" class="btn txt" aria-label="Vue 3D">3D</button>
     <button id="btn-fit" class="btn" aria-label="Vue d'ensemble">
       <svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z"/></svg>
     </button>
@@ -93,6 +95,7 @@
       <label><input type="checkbox" id="set-companies" checked> Logos des entreprises</label>
       <label><input type="checkbox" id="set-shields" checked> Numéros de routes</label>
       <label><input type="checkbox" id="set-trail" checked> Trace parcourue</label>
+      <label><input type="checkbox" id="set-3d"> Vue 3D inclinée (comme un GPS)</label>
       <label><input type="checkbox" id="set-autozoom" checked> Zoom selon la vitesse</label>
       <label><input type="checkbox" id="set-awake" checked> Garder l'écran allumé</label>
       </div>
