@@ -18,7 +18,7 @@ flowchart LR
 |---|---|---|
 | Plugin du jeu | `plugin/` | DLL C++ (SDK officiel SCS 1.14). Lit position, cap, vitesse, limitation, GPS, mission, carburant, heure du jeu. Envoie un petit JSON en UDP local 20 fois par seconde, 1 fois par seconde en pause. Ne bloque jamais le jeu. |
 | Serveur | `server/server.js` | Reçoit l'UDP, sert l'appli et la carte, pousse la télémétrie aux téléphones (Server-Sent Events). Aucune dépendance obligatoire. |
-| Appli téléphone | `web/` | Carte vectorielle dessinée en Canvas, orientée dans le sens de la marche, zoom auto selon la vitesse, gestes (glisser, pincer, double tap), thème nuit/jour, ajout à l'écran d'accueil. |
+| Appli téléphone | `web/` | Carte vectorielle dessinée en Canvas, orientée dans le sens de la marche, zoom auto selon la vitesse, gestes (glisser, pincer, tourner à deux doigts, double tap), thème nuit/jour, ajout à l'écran d'accueil. |
 | Itinéraire | `server/route.js` | Calcule l'itinéraire le plus rapide (A*, 2 à 25 ms pour toute l'Europe) sur le graphe routier du jeu : voies, sens uniques, tourne-à-gauche des échangeurs, ferries. Recalcule si tu sors de l'itinéraire plus de 2,5 s. |
 | Convoi | `server/convoy.js`, `server/convoy-hub.js` | Partage ta position, ta mission et ton itinéraire avec les potes du même code de convoi, via un broker MQTT public. Tout est chiffré (AES-256-GCM, clé PBKDF2 du code). |
 | Carte | `tools/map/` | Extrait le réseau routier de **tes** fichiers du jeu (DLC possédés seulement) et le découpe en tuiles légères (4 Mo en gzip pour toute l'Europe). |
@@ -30,7 +30,7 @@ flowchart LR
    Ajoute-la à l'écran d'accueil : elle s'ouvre alors en plein écran comme une appli.
 3. Lance ETS2. Au premier démarrage avec le plugin, le jeu affiche un message sur les « fonctions SDK avancées » : clique **OK**.
 
-Boutons à droite : zoom, boussole (bascule « cap en haut » / « nord en haut »), 3D/2D (vue inclinée comme un GPS, gardée quand on déplace la carte ; à plat seulement en vue d'ensemble), vue d'ensemble (camion + destination), réglages.
+Boutons à droite : zoom, boussole (bascule « cap en haut » / « nord en haut » ; après une rotation à deux doigts, elle remet le nord en haut), 3D/2D (vue inclinée comme un GPS, gardée quand on déplace la carte ; à plat seulement en vue d'ensemble), vue d'ensemble (camion + destination), réglages.
 Dès que tu déplaces la carte, le suivi s'arrête : **Recentrer** le remet.
 
 ## Itinéraire en rouge

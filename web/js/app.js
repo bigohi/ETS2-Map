@@ -51,6 +51,8 @@ const state = {
   truck: null,             // interpolated {x, y, h}
   follow: true,
   overview: false,         // fit view (always flat)
+  userRot: false,          // turned by hand with two fingers: keep that rotation
+  toNorth: false,          // compass tapped after a hand rotation: back to north
   trail: JSON.parse(sessionStorage.getItem('ets2map.trail') || '[]'),
   dest: null, source: null, jobKey: '',
   mapError: null,
@@ -290,6 +292,7 @@ function updateCamera(now) {
   const followed = state.followPeer ? peers.find((p) => p.id === state.followPeer) : null;
   const truck = followed ?? state.truck;
   if (state.follow && truck) {
+    state.overview = state.userRot = state.toNorth = false;
     view.cx = truck.x;
     view.cy = truck.y;
     // Landscape: the job card sits on the left, so keep the truck right of center.
@@ -304,8 +307,9 @@ function updateCamera(now) {
     const target = base * Math.pow(2, settings.zoomBias) * (settings.view3d ? 1.3 : 1);
     state.smoothScale = state.smoothScale == null ? target : state.smoothScale + (target - state.smoothScale) * Math.min(1, dt * 1.2);
     view.scale = state.smoothScale;
-  } else if (!settings.headingUp && view.rot !== 0) {
+  } else if ((!settings.headingUp || state.toNorth) && !state.userRot && view.rot !== 0) {
     view.rot = approachAngle(view.rot, 0, dt, 8);
+    if (view.rot === 0) state.toNorth = false;
   }
   $('compass').style.transform = `rotate(${(view.rot * 180) / Math.PI}deg)`;
   // 3D stays on while panning; only the overview is flat (it fits a bbox).
@@ -333,6 +337,17 @@ function setFollow(on) {
   $('btn-recenter').classList.toggle('hidden', on);
   if (on) state.smoothScale = view.scale;
   dirty = true;
+}
+
+// Leave follow mode where we are. Flat: anchored at screen center.
+// Tilted: keep the anchor, moving it would change the perspective.
+function leaveFollow() {
+  if (!state.follow) return;
+  if (!view.tilt) {
+    const [cx, cy] = view.toWorld(view.w / 2, view.h / 2);
+    view.cx = cx; view.cy = cy; view.ax = 0.5; view.ay = 0.5;
+  }
+  setFollow(false);
 }
 
 function zoomAt(factor, px, py) {
@@ -366,6 +381,7 @@ function fitOverview() {
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   setFollow(false);
   state.overview = true;
+  state.userRot = state.toNorth = false;
   computeInsets();
   // Fit into the part of the screen not covered by the HUD.
   const ins = view.insets;
@@ -450,15 +466,7 @@ surface.addEventListener('pointermove', (e) => {
     if (!gesture.moved && Math.hypot(x - gesture.x, y - gesture.y) < 8) return;
     if (!gesture.moved) {
       gesture.moved = true;
-      if (state.follow) {
-        // Leave follow mode where we are. Flat: anchored at screen center.
-        // Tilted: keep the anchor, moving it would change the perspective.
-        if (!view.tilt) {
-          const [cx, cy] = view.toWorld(view.w / 2, view.h / 2);
-          view.cx = cx; view.cy = cy; view.ax = 0.5; view.ay = 0.5;
-        }
-        setFollow(false);
-      }
+      leaveFollow();
       gesture.world = view.toWorld(x, y);
     }
     const [nx, ny] = view.toWorld(x, y);
@@ -470,12 +478,27 @@ surface.addEventListener('pointermove', (e) => {
     const mx = (pts[0][0] + pts[1][0]) / 2, my = (pts[0][1] + pts[1][1]) / 2;
     const factor = d / gesture.d;
     gesture.d = d;
-    zoomAt(factor, state.follow ? undefined : mx, state.follow ? undefined : my);
-    if (!state.follow) {
-      const [nx, ny] = view.toWorld(mx, my);
+    // Twist: turns the map once the fingers have turned past ~12°, so a
+    // plain pinch does not turn it by accident.
+    const a = Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]);
+    let da = a - gesture.a;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    gesture.a = a;
+    if (!gesture.rotating) {
+      gesture.twist += da;
+      if (Math.abs(gesture.twist) > 0.2) { gesture.rotating = true; da = gesture.twist; leaveFollow(); }
+    }
+    if (state.follow) zoomAt(factor);
+    else {
+      // The spot under the fingers stays under the fingers.
       const [ox, oy] = view.toWorld(gesture.mx, gesture.my);
+      view.scale = clampScale(view.scale * factor);
+      if (gesture.rotating) { view.rot += da; state.userRot = true; state.toNorth = false; }
+      const [nx, ny] = view.toWorld(mx, my);
       view.cx += ox - nx;
       view.cy += oy - ny;
+      dirty = true;
     }
     gesture.mx = mx; gesture.my = my;
   }
@@ -501,7 +524,8 @@ function startGesture() {
   if (pts.length === 1) gesture = { n: 1, x: pts[0][0], y: pts[0][1], moved: gesture?.moved && gesture.n > 1, world: view.toWorld(pts[0][0], pts[0][1]) };
   else {
     const mx = (pts[0][0] + pts[1][0]) / 2, my = (pts[0][1] + pts[1][1]) / 2;
-    gesture = { n: 2, d: Math.max(10, Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1])), mx, my, moved: true };
+    const a = Math.atan2(pts[1][1] - pts[0][1], pts[1][0] - pts[0][0]);
+    gesture = { n: 2, d: Math.max(10, Math.hypot(pts[0][0] - pts[1][0], pts[0][1] - pts[1][1])), mx, my, a, twist: 0, rotating: false, moved: true };
   }
 }
 surface.addEventListener('wheel', (e) => {
@@ -515,6 +539,8 @@ surface.addEventListener('wheel', (e) => {
 $('btn-zoom-in').onclick = () => zoomAt(1.6);
 $('btn-zoom-out').onclick = () => zoomAt(1 / 1.6);
 $('btn-rotate').onclick = () => {
+  // After a hand rotation, the compass first puts north back up.
+  if (state.userRot) { state.userRot = false; state.toNorth = true; dirty = true; return; }
   settings.headingUp = !settings.headingUp;
   saveSettings();
   if (settings.headingUp && !state.follow) setFollow(true);
