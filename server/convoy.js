@@ -4,7 +4,7 @@
 // "convoy room" through a public MQTT broker. Zero dependencies: a minimal
 // MQTT 3.1.1 client (QoS 0 only) is implemented below over node:tls.
 //
-//   const c = new Convoy({ room: 'My Secret Room', name: 'Quentin', id: 'k3j4h5' });
+//   const c = new Convoy({ room: 'My Secret Room', name: 'Alex', id: 'k3j4h5' });
 //   c.on('state', (peerId, obj, { name }) => ...);
 //   c.on('route', (peerId, obj) => ...);
 //   c.on('leave', (peerId) => ...);
@@ -518,7 +518,7 @@ export class Convoy extends EventEmitter {
     const isNew = !peer;
     this.peers.set(pid, { name, last: now, sess: typeof msg.s === 'string' ? msg.s : null });
     if (isNew) this._setStatus({ peers: this.peers.size });
-    if (kind === 'state') this._emit('state', pid, msg.d, { name });
+    if (kind === 'state') this._emit('state', pid, msg.d, { name, ts: msg.ts });
     else this._emit('route', pid, msg.d);
   }
 

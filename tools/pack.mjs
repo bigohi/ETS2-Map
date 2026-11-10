@@ -69,6 +69,8 @@ fs.writeFileSync(path.join(OUT, 'LISEZ-MOI.txt'), `ETS2 Map - convoi
 2. Double-clique "1 - Installer le plugin.cmd" (une seule fois, ETS2 ferme).
 3. Double-clique "2 - Lancer ETS2 Map.cmd" et laisse la fenetre ouverte.
    Au premier lancement, donne ton pseudo et le MEME code de convoi que tes potes.
+   Ensuite plus besoin : ETS2 lance ETS2 Map tout seul (fenetre reduite)
+   et le ferme quand tu quittes le jeu.
 4. Sur ton telephone, scanne le QR code affiche : il ouvre https://ets.enorme.bid
    deja configure (marche partout, meme en 4G).
 5. Sans QR : ouvre https://ets.enorme.bid, bouton "Convoi" (2 personnes),

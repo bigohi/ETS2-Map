@@ -30,6 +30,11 @@ flowchart LR
    Ajoute-la à l'écran d'accueil : elle s'ouvre alors en plein écran comme une appli.
 3. Lance ETS2. Au premier démarrage avec le plugin, le jeu affiche un message sur les « fonctions SDK avancées » : clique **OK**.
 
+Une fois le plugin installé (version 1.1.0), l'étape 1 est facultative : **ETS2 lance ETS2 Map tout seul** au démarrage du jeu, dans une fenêtre réduite, et la ferme en quittant. Si ETS2 Map tourne déjà, le jeu n'en lance pas un second. Pour couper ce lancement : variable d'environnement `ETS2MAP_AUTOSTART=0`.
+
+Sous la carte de livraison, la carte **Prochaines directions** donne la prochaine manœuvre (tourner, serrer, ferry, arrivée), sa distance, puis la suivante (réglage « Prochaines directions »).
+Chaque pote a sa couleur, sa vitesse à côté de son pseudo, et sa distance en kilomètres du jeu. **Centrer** sur un pote affiche sa livraison en haut à gauche.
+
 Boutons à droite : zoom, boussole (bascule « cap en haut » / « nord en haut » ; après une rotation à deux doigts, elle remet le nord en haut), 3D/2D (vue inclinée comme un GPS, gardée quand on déplace la carte ; à plat seulement en vue d'ensemble), vue d'ensemble (camion + destination), réglages.
 Dès que tu déplaces la carte, le suivi s'arrête : **Recentrer** le remet.
 
@@ -68,6 +73,8 @@ Tout le convoi peut ouvrir **https://ets.enorme.bid** en même temps, depuis n'i
 Le mode Wi-Fi (`http://<IP du PC>:8765`) reste disponible : 20 mises à jour/s au lieu de 4, sans Internet.
 
 ## Pack pour les potes
+
+Téléchargement : **https://github.com/bigohi/ETS2-Map/releases/latest** (fichier `ETS2-Map-Convoi.zip`). Le site et l'appli ont un bouton « Télécharger ETS2 Map pour PC » (Réglages et Convoi) qui y mène.
 
 `npm run pack` crée `dist/ETS2-Map-Convoi.zip` (16 Mo) : serveur, appli, carte, graphe routier et plugin déjà compilés. Pas besoin de Visual Studio ni d'extraire la carte.
 Le pote dézippe, lance `1 - Installer le plugin.cmd` puis `2 - Lancer ETS2 Map.cmd` (Node.js est installé avec winget s'il manque). Mode d'emploi dans `LISEZ-MOI.txt`.

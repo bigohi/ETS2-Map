@@ -19,8 +19,9 @@
   <canvas id="overlay"></canvas>
 
   <!-- Job / navigation card -->
+  <div id="topleft">
   <section id="job" class="card hidden" aria-live="polite">
-    <div class="job-line1"><span id="job-title">—</span></div>
+    <div class="job-line1"><span id="job-who" class="who-chip hidden"></span><span id="job-title">—</span></div>
     <div class="job-line2" id="job-sub"></div>
     <div class="job-stats">
       <div><span class="k">Distance</span><span id="nav-dist" class="v">—</span></div>
@@ -29,6 +30,14 @@
       <div id="deadline-box"><span class="k">Délai</span><span id="deadline" class="v">—</span><span id="deadline-real" class="r"></span></div>
     </div>
   </section>
+
+  <!-- Next directions -->
+  <section id="turn" class="card hidden" aria-live="off">
+    <svg id="turn-icon" class="turn-icon" viewBox="0 0 24 24" aria-hidden="true"></svg>
+    <div class="turn-main"><span id="turn-dist">—</span><span id="turn-text"></span></div>
+    <div id="turn-then" class="turn-then"><span class="k">Puis</span><svg id="turn-then-icon" class="turn-icon" viewBox="0 0 24 24" aria-hidden="true"></svg><span id="turn-then-dist"></span></div>
+  </section>
+  </div>
 
   <!-- Status banner -->
   <div id="banner" class="banner">Connexion…</div>
@@ -94,6 +103,7 @@
       <label><input type="checkbox" id="set-pois" checked> Stations, parkings, garages…</label>
       <label><input type="checkbox" id="set-companies" checked> Logos des entreprises</label>
       <label><input type="checkbox" id="set-shields" checked> Numéros de routes</label>
+      <label><input type="checkbox" id="set-turns" checked> Prochaines directions</label>
       <label><input type="checkbox" id="set-trail" checked> Trace parcourue</label>
       <label><input type="checkbox" id="set-3d"> Vue 3D inclinée (comme un GPS)</label>
       <label><input type="checkbox" id="set-autozoom" checked> Zoom selon la vitesse</label>
@@ -106,6 +116,7 @@
       <div class="row">
         <button type="button" id="btn-clear-dest">Effacer la destination choisie</button>
       </div>
+      <div class="row"><a class="download" href="https://github.com/bigohi/ETS2-Map/releases/latest" target="_blank" rel="noopener">Télécharger ETS2 Map pour PC</a></div>
       <p class="about">Appui long sur la carte : itinéraire vers ce point.</p>
       <p class="about" id="about"></p>
       <button value="close" class="primary">Fermer</button>
@@ -128,6 +139,7 @@
       </div>
       <ul id="convoy-list"></ul>
       </div>
+      <div class="row"><a class="download" href="https://github.com/bigohi/ETS2-Map/releases/latest" target="_blank" rel="noopener">Télécharger ETS2 Map pour PC</a></div>
       <button value="close">Fermer</button>
     </form>
   </dialog>

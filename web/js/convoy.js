@@ -3,13 +3,37 @@ import { RouteView } from './route.js';
 
 // No amber/orange (freeways) and no red (our own route).
 // Nor blue/cyan (our own truck and trail).
-const COLORS = ['#b07cff', '#2ed3b7', '#ff5fa2', '#9bd43a', '#f2f2f2'];
-const DELAY = 650; // ms behind real time, peers send every 500 ms
+const COLORS = ['#b07cff', '#2ed3b7', '#ff5fa2', '#b4e03a', '#f2f2f2', '#c98a5a', '#2fb65f', '#e04bff', '#93a7c4', '#ffd0e4'];
+const DELAY = 450; // ms behind real time, peers send every 250 ms
 
-export function colorFor(id) {
+/**
+ * One color per friend: the one its id hashes to when it is free, else the
+ * next free one. Two friends only share a color past COLORS.length friends.
+ */
+export function colorFor(id, taken = []) {
   let h = 0;
   for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  for (let i = 0; i < COLORS.length; i++) {
+    const color = COLORS[(h + i) % COLORS.length];
+    if (!taken.includes(color)) return color;
+  }
   return COLORS[h % COLORS.length];
+}
+
+/**
+ * Turns the sender's clock into ours. Packets arrive late by a varying delay;
+ * the quickest ones give the offset between both clocks, so samples keep the
+ * spacing they were sent with and the motion stays even.
+ */
+export class Clock {
+  stamp(ts, now) {
+    if (typeof ts !== 'number') return now;
+    const off = now - ts;
+    // Follows a quicker packet at once, a slower network or clock drift slowly.
+    if (this.off == null || off < this.off || off - this.off > 3000) this.off = off;
+    else this.off += Math.min(2, off - this.off);
+    return ts + this.off;
+  }
 }
 
 export class ConvoyView {
@@ -22,7 +46,7 @@ export class ConvoyView {
   onPeer(p) {
     let peer = this.peers.get(p.id);
     if (!peer) {
-      peer = { id: p.id, name: p.name, color: colorFor(p.id), samples: [], route: new RouteView() };
+      peer = { id: p.id, name: p.name, color: colorFor(p.id, [...this.peers.values()].map((o) => o.color)), samples: [], route: new RouteView(), clock: new Clock() };
       this.peers.set(p.id, peer);
       this.version++;
     }
@@ -32,9 +56,11 @@ export class ConvoyView {
     // ETS2 Map running but no truck on the road: listed, not drawn.
     peer.offline = !!s?.offline;
     if (peer.offline) { peer.samples = []; return; }
-    const now = performance.now();
+    // p.ts: when the friend sent it (their clock, ms).
+    const now = peer.clock.stamp(p.ts, performance.now());
     const prev = peer.samples[peer.samples.length - 1];
     if (prev && Math.hypot(prev.x - s.x, prev.y - s.z) > 800) peer.samples = []; // teleport
+    if (prev && now <= prev.t) return; // out of order
     peer.samples.push({ t: now, x: s.x, y: s.z, h: s.h, spd: s.spd, paused: s.paused });
     if (peer.samples.length > 8) peer.samples.shift();
     peer.route.update(s.x, s.z);
@@ -68,7 +94,7 @@ export class ConvoyView {
     for (const p of this.peers.values()) {
       if (this.pendingRoutes?.has(p.id)) { p.route.set(this.pendingRoutes.get(p.id)); this.pendingRoutes.delete(p.id); }
       const pos = interpolate(p.samples, now);
-      if (pos) out.push({ ...pos, id: p.id, name: p.name, color: p.color, route: p.route, last: p.last });
+      if (pos) out.push({ ...pos, id: p.id, name: p.name, color: p.color, route: p.route, last: p.last, spd: p.last?.spd ?? 0 });
     }
     return out;
   }

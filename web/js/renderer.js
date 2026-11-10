@@ -230,33 +230,39 @@ export class Renderer {
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
+    // Routes: only the part on screen, thinned to what the zoom can show.
+    const routeBox = view.bbox(60), routeTol = 0.6 / view.scale;
+
     // Friends' routes (dashed, their color), under ours.
     if (scene.opts.peerRoutes && scene.peers?.length) {
       const w = Math.max(4 * q, px(3.5));
       for (const peer of scene.peers) {
         if (!peer.route?.active || peer.hideRoute) continue;
-        const paths = peer.route.path(q);
+        const r = peer.route.path(q, routeBox, routeTol);
         // Dark underlay so the dashes read on top of amber highways.
         ctx.setLineDash([]);
         ctx.strokeStyle = 'rgba(10,12,16,0.7)';
         ctx.lineWidth = w + px(3);
-        for (const p of paths) if (p) ctx.stroke(p);
+        ctx.stroke(r.path);
+        // Dashes anchored on the road: they do not slide with the truck.
         ctx.setLineDash([px(10), px(6)]);
+        ctx.lineDashOffset = r.start % px(16);
         ctx.strokeStyle = peer.color;
         ctx.lineWidth = w;
-        for (const p of paths) if (p) ctx.stroke(p);
+        ctx.stroke(r.path);
       }
       ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
     }
 
     // GPS route, on the road, under the trail and markers.
     if (scene.route?.active) {
-      const paths = scene.route.path(q);
+      const r = scene.route.path(q, routeBox, routeTol);
       const w = Math.max(7 * q, px(5));
       for (const [color, width] of [[theme.routeEdge, w + px(2.5)], [theme.route, w]]) {
         ctx.strokeStyle = color;
         ctx.lineWidth = width;
-        for (const p of paths) if (p) ctx.stroke(p);
+        ctx.stroke(r.path);
       }
     }
 
@@ -296,9 +302,10 @@ export class Renderer {
     if (scene.dest) this.drawPin(view, scene.dest, theme.dest, true);
     for (const peer of scene.peers ?? []) this.drawPeer(view, peer);
     if (scene.truck) this.drawTruck(view, scene.truck);
-    if (scene.dest && scene.truck) this.drawEdgeArrow(view, scene.dest, scene.truck, theme.dest, null);
+    if (scene.dest && scene.truck) this.drawEdgeArrow(view, scene.dest, scene.truck, theme.dest, null, scene.roadScale);
     const me = scene.truck ?? { x: view.cx, y: view.cy };
-    for (const peer of scene.peers ?? []) this.drawEdgeArrow(view, [peer.x, peer.y], me, peer.color, peer.name);
+    // Off screen: name, distance in the game's kilometers, speed.
+    for (const peer of scene.peers ?? []) this.drawEdgeArrow(view, [peer.x, peer.y], me, peer.color, peer.name, scene.roadScale, `${kmhOf(peer)} km/h`);
     this.ctx = this.mapCtx;
   }
 
@@ -634,16 +641,17 @@ export class Renderer {
     ctx.fill();
     ctx.stroke();
     ctx.restore();
-    // Name tag under the arrow, always upright.
+    // Name and speed under the arrow, always upright.
     ctx.font = '700 12px system-ui, sans-serif';
-    const w = ctx.measureText(peer.name).width + 12;
+    const tag = `${peer.name} · ${kmhOf(peer)} km/h`;
+    const w = ctx.measureText(tag).width + 14;
     ctx.fillStyle = peer.color;
     roundRect(ctx, -w / 2, 17, w, 18, 9);
     ctx.fill();
     ctx.fillStyle = '#111';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(peer.name, 0, 26.5);
+    ctx.fillText(tag, 0, 26.5);
     ctx.restore();
   }
 
@@ -677,7 +685,8 @@ export class Renderer {
   }
 
   // Arrow at the screen edge pointing to something off screen (destination, friend).
-  drawEdgeArrow(view, dest, truck, color, name) {
+  // Distances are straight lines, in the game's kilometers (map meters x roadScale).
+  drawEdgeArrow(view, dest, truck, color, name, roadScale = 19, extra = null) {
     const { ctx, theme } = this;
     const [dx, dy] = view.toScreen(dest[0], dest[1]);
     // Free map area between the HUD panels (computed by the app from the layout).
@@ -698,7 +707,7 @@ export class Renderer {
     if (s < 0) t = Math.min(t, (top - ty) / s);
     if (!isFinite(t) || t < 0) return;
     const ex = tx + c * t, ey = ty + s * t;
-    const distKm = Math.hypot(dest[0] - truck.x, dest[1] - truck.y) / 1000;
+    const distKm = (Math.hypot(dest[0] - truck.x, dest[1] - truck.y) * roadScale) / 1000;
     ctx.save();
     ctx.translate(ex, ey);
     ctx.rotate(ang);
@@ -718,7 +727,7 @@ export class Renderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const km = `${distKm < 10 ? distKm.toFixed(1) : Math.round(distKm)} km`;
-    const label = name ? `${name} · ${km}` : km;
+    const label = [name, km, extra].filter(Boolean).join(' · ');
     const lx = ex - c * 30, ly = ey - s * 22;
     ctx.strokeStyle = theme.labelHalo;
     ctx.lineWidth = 3.5;
@@ -727,6 +736,8 @@ export class Renderer {
     ctx.fillText(label, lx, ly);
   }
 }
+
+const kmhOf = (peer) => Math.round(Math.abs(peer.spd ?? 0) * 3.6);
 
 function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();

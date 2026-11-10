@@ -2,7 +2,7 @@
 import { MapStore } from './mapdata.js';
 import { Renderer, View, THEMES } from './renderer.js';
 import { RouteView } from './route.js';
-import { ConvoyView } from './convoy.js';
+import { ConvoyView, Clock } from './convoy.js';
 import { WebConvoy } from './mqtt-ws.js';
 import { countryFr } from './countries.js';
 import { latin, hasForeign } from './latin.js';
@@ -12,7 +12,7 @@ const $ = (id) => document.getElementById(id);
 // ---------------------------------------------------------------------------
 // Settings (persisted).
 
-const DEFAULTS = { hiddenRoutes: [], peerRoutes: true, route: true, night: true, pois: true, companies: true, shields: true, trail: true, autozoom: true, awake: true, headingUp: true, view3d: false, zoomBias: 0 };
+const DEFAULTS = { hiddenRoutes: [], peerRoutes: true, route: true, night: true, pois: true, companies: true, shields: true, trail: true, turns: true, autozoom: true, awake: true, headingUp: true, view3d: false, zoomBias: 0 };
 const settings = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('ets2map.settings') || '{}') };
 const saveSettings = () => localStorage.setItem('ets2map.settings', JSON.stringify(settings));
 
@@ -59,6 +59,7 @@ const state = {
   lastStreamAt: 0,
   manualScale: 0.3,        // when not following
   smoothScale: null,
+  interval: 50, delay: 110, // ms between samples, ms rendered in the past
 };
 
 // ---------------------------------------------------------------------------
@@ -69,22 +70,33 @@ function connect() {
   es.addEventListener('t', (e) => onTelemetry(JSON.parse(e.data)));
   es.addEventListener('route', (e) => { route.set(JSON.parse(e.data)); if (state.truck) route.update(state.truck.x, state.truck.y); updateHud(); dirty = true; });
   es.addEventListener('convoy', (e) => { convoy.info = JSON.parse(e.data); renderConvoy(); });
-  es.addEventListener('peer', (e) => { convoy.onPeer(JSON.parse(e.data)); scheduleConvoyRender(); });
-  es.addEventListener('peerroute', (e) => { const m = JSON.parse(e.data); convoy.onRoute(m.id, m.route); dirty = true; });
+  es.addEventListener('peer', (e) => onPeerState(JSON.parse(e.data)));
+  es.addEventListener('peerroute', (e) => { const m = JSON.parse(e.data); convoy.onRoute(m.id, m.route); updateHud(); dirty = true; });
   es.addEventListener('peerleave', (e) => { convoy.onLeave(JSON.parse(e.data).id); renderConvoy(); dirty = true; });
   es.addEventListener('status', (e) => { state.status = JSON.parse(e.data); state.lastStreamAt = performance.now(); updateBanner(); });
   es.onopen = () => { state.lastStreamAt = performance.now(); updateBanner(); };
   es.onerror = () => { state.status = { connected: false, serverDown: true }; updateBanner(); };
 }
 
-function onTelemetry(t) {
+function onPeerState(p) {
+  convoy.onPeer(p);
+  scheduleConvoyRender();
+  if (p.id === state.followPeer) updateHud();
+}
+
+const meClock = new Clock();
+/** ts: when the PC sent it (online mode, the PC's clock); none on Wi-Fi. */
+function onTelemetry(t, ts) {
   state.telemetry = t;
   state.lastStreamAt = performance.now();
   state.status.connected = true;
   state.status.serverDown = false;
-  const now = performance.now();
+  const now = meClock.stamp(ts, performance.now());
   const last = state.samples[state.samples.length - 1];
+  if (last && now <= last.t) return; // out of order
   const sample = { t: now, x: t.x, y: t.z, h: t.h, spd: t.spd, paused: t.paused };
+  // How far apart samples come: 50 ms on Wi-Fi, 250 ms through the convoy.
+  if (last && !t.paused && now - last.t < 1000) state.interval += (now - last.t - state.interval) * 0.1;
   // Teleport (new profile, ferry, train, job reset): drop interpolation + trail.
   if (last && Math.hypot(sample.x - last.x, sample.y - last.y) > 800) {
     state.samples = [];
@@ -101,12 +113,15 @@ function onTelemetry(t) {
   dirty = true;
 }
 
-// Render 100 ms in the past so we can interpolate between two real samples.
-const INTERP_DELAY = 110;
+// Render in the past so we can interpolate between two real samples: 110 ms
+// on Wi-Fi, more when samples come further apart (online: 4 per second), else
+// the truck runs out of samples, guesses ahead and jumps back.
 function interpolatedTruck(now) {
   const s = state.samples;
   if (!s.length) return null;
-  const rt = now - INTERP_DELAY;
+  const want = Math.max(110, Math.min(700, state.interval * 1.6 + 30));
+  state.delay += (want - state.delay) * 0.02;
+  const rt = now - state.delay;
   if (s.length === 1 || rt <= s[0].t) return { x: s[0].x, y: s[0].y, h: s[0].h };
   for (let i = s.length - 1; i > 0; i--) {
     const a = s[i - 1], b = s[i];
@@ -172,12 +187,24 @@ function setReal(id, text) { $(id).textContent = text ?? ''; }
 const cityName = (name, id) => (hasForeign(name) ? store.meta?.cityNames?.[id] ?? latin(name) : name);
 
 // The real clock ticks on its own, game or not.
-setInterval(() => { setReal('clock-real', `${fmtReal(new Date())} réel`); if (state.telemetry) updateHud(); }, 1000);
+setInterval(() => { setReal('clock-real', `${fmtReal(new Date())} réel`); updateHud(); }, 1000);
 setReal('clock-real', `${fmtReal(new Date())} réel`);
 
+/** Whose delivery the job card shows: the friend the camera follows, else ours. */
+function hudSource() {
+  const p = state.follow && state.followPeer ? convoy.peers.get(state.followPeer) : null;
+  return p && !p.offline && p.last ? { t: p.last, route: p.route, peer: p } : { t: state.telemetry, route, peer: null };
+}
+
 function updateHud() {
-  const t = state.telemetry;
-  if (!t) return;
+  if (state.telemetry) updateDash(state.telemetry);
+  const src = hudSource();
+  if (src.t) updateJobCard(src);
+  else $('job').classList.add('hidden');
+  updateTurns(src);
+}
+
+function updateDash(t) {
   if (t.scale >= 10 && t.scale <= 60) roadScale = t.scale;
 
   // Speed cluster.
@@ -202,13 +229,18 @@ function updateHud() {
   $('rest-val').classList.toggle('tired', t.rest < 120);
   setReal('rest-real', t.rest > 0 ? `≈ ${fmtDur(toReal(t.rest))} réel` : '');
   $('clock-val').textContent = t.gt ? fmtClock(t.gt) : '—';
+}
 
-  // Job / navigation card.
+// Job / navigation card.
+function updateJobCard({ t, route, peer }) {
   const job = t.job;
+  const who = $('job-who');
+  who.classList.toggle('hidden', !peer);
+  if (peer) { who.textContent = peer.name; who.style.background = peer.color; }
   // Distance/time: the game's GPS when it has one, else our own route.
   const ownRoute = route.active && !(t.nd > 1);
   const hasNav = t.nd > 1 || ownRoute;
-  $('job').classList.toggle('hidden', !job && !hasNav);
+  $('job').classList.toggle('hidden', !job && !hasNav && !peer);
   if (job) {
     $('job-title').textContent = `${cityName(job.dst, job.dstId)}${job.dstCo ? ' · ' + latin(job.dstCo) : ''}`;
     const parts = [latin(job.cargo)];
@@ -217,12 +249,12 @@ function updateHud() {
     if (job.src) parts.push(`depuis ${cityName(job.src, job.srcId)}`);
     $('job-sub').textContent = parts.filter(Boolean).join(' · ');
   } else {
-    $('job-title').textContent = latin(route.target?.label) ?? 'Itinéraire GPS';
+    $('job-title').textContent = latin(route.target?.label) ?? (hasNav ? 'Itinéraire GPS' : 'Conduite libre');
     $('job-sub').textContent = ownRoute ? 'Itinéraire calculé par ETS2 Map' : '';
   }
   if (ownRoute) {
-    // Our estimate is in real driving time.
-    $('nav-dist').textContent = fmtKm(route.remaining());
+    // Map meters to the game's kilometers (the map is 19 times smaller on the road).
+    $('nav-dist').textContent = fmtKm(route.remaining() * roadScale);
     // Our estimate is real driving time: show the game equivalent under it.
     const realMin = route.remainingDuration() / 60;
     $('nav-time').textContent = `≈ ${fmtDur(realMin)}`;
@@ -247,6 +279,45 @@ function updateHud() {
     $('deadline-box').classList.remove('hidden');
   } else {
     $('deadline-box').classList.add('hidden');
+  }
+}
+
+// Next directions: what to do at the next junction, and the one after.
+// Codes come from the PC (server/route.js TURN); 6 is the arrival.
+const TURNS = {
+  1: ['Tourner à gauche', 'turn', true], 2: ['Tourner à droite', 'turn', false],
+  3: ['Serrer à gauche', 'keep', true], 4: ['Serrer à droite', 'keep', false],
+  5: ['Prendre le ferry', 'ferry', false], 6: ['Arrivée', 'arrive', false], 7: ['Rester au milieu', 'straight', false],
+};
+const TURN_ICONS = {
+  turn: '<path d="M7 21V11a3 3 0 0 1 3-3h8"/><path d="M14 4l4 4-4 4"/>',
+  keep: '<path d="M9 21v-6l7-8"/><path d="M11 7h5v5"/>',
+  straight: '<path d="M12 21V4"/><path d="M7 9l5-5 5 5"/>',
+  ferry: '<path d="M3 15h18l-2.5 5h-13z"/><path d="M7 15v-5h10v5"/><path d="M12 10V5"/>',
+  arrive: '<path d="M12 21s-6-5.6-6-10.5a6 6 0 0 1 12 0C18 15.4 12 21 12 21z"/><circle cx="12" cy="10.5" r="2"/>',
+};
+// Meters on the map are what the truck really drives: 90 km/h covers 25 of them a second.
+const fmtTurnDist = (m) => (m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} m` : `${(m / 1000).toFixed(m < 10000 ? 1 : 0).replace('.', ',')} km`);
+function setTurnIcon(el, code) {
+  const [, icon, left] = TURNS[code] ?? TURNS[7];
+  if (el.dataset.code !== String(code)) {
+    el.dataset.code = code;
+    el.innerHTML = TURN_ICONS[icon];
+    el.classList.toggle('flip', left);
+  }
+}
+function updateTurns({ route }) {
+  const list = settings.turns ? route.maneuvers(2) : null;
+  $('turn').classList.toggle('hidden', !list);
+  if (!list) return;
+  const [next, then] = list;
+  setTurnIcon($('turn-icon'), next.code);
+  $('turn-dist').textContent = fmtTurnDist(next.dist);
+  $('turn-text').textContent = (TURNS[next.code] ?? TURNS[7])[0];
+  $('turn-then').classList.toggle('hidden', !then);
+  if (then) {
+    setTurnIcon($('turn-then-icon'), then.code);
+    $('turn-then-dist').textContent = fmtTurnDist(then.dist);
   }
 }
 
@@ -302,7 +373,7 @@ function updateCamera(now) {
     view.ay = settings.view3d ? (landscape ? 0.78 : 0.76) : settings.headingUp ? (landscape ? 0.7 : 0.66) : 0.52;
     const targetRot = settings.headingUp ? truck.h * Math.PI * 2 : 0;
     view.rot = approachAngle(view.rot, targetRot, dt, 6);
-    const kmh = Math.abs(state.telemetry?.spd ?? 0) * 3.6;
+    const kmh = Math.abs((followed ? followed.spd : state.telemetry?.spd) ?? 0) * 3.6;
     const base = settings.autozoom ? autoScale(kmh, Math.min(view.w, view.h)) : Math.min(view.w, view.h) / 600;
     const target = base * Math.pow(2, settings.zoomBias) * (settings.view3d ? 1.3 : 1);
     state.smoothScale = state.smoothScale == null ? target : state.smoothScale + (target - state.smoothScale) * Math.min(1, dt * 1.2);
@@ -332,7 +403,7 @@ function approachAngle(cur, target, dt, speed) {
 
 function setFollow(on) {
   state.follow = on;
-  if (!on) state.followPeer = null;
+  if (!on) { state.followPeer = null; updateHud(); }
   if (on) state.overview = false;
   $('btn-recenter').classList.toggle('hidden', on);
   if (on) state.smoothScale = view.scale;
@@ -560,7 +631,7 @@ function set3d(on) {
 $('set-3d').onchange = (e) => set3d(e.target.checked);
 set3d(settings.view3d);
 $('btn-fit').onclick = () => fitOverview();
-$('btn-recenter').onclick = () => { state.followPeer = null; setFollow(true); updateRecenter(); };
+$('btn-recenter').onclick = () => { state.followPeer = null; setFollow(true); updateRecenter(); updateHud(); };
 // The pill says what it does: back to me when following a friend.
 function updateRecenter() {
   const label = $('btn-recenter').querySelector('span');
@@ -575,7 +646,7 @@ $('btn-fullscreen').onclick = () => {
   else (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el, { navigationUI: 'hide' });
 };
 
-const toggles = { 'set-peer-routes': 'peerRoutes', 'set-route': 'route', 'set-night': 'night', 'set-pois': 'pois', 'set-companies': 'companies', 'set-shields': 'shields', 'set-trail': 'trail', 'set-autozoom': 'autozoom', 'set-awake': 'awake' };
+const toggles = { 'set-peer-routes': 'peerRoutes', 'set-route': 'route', 'set-night': 'night', 'set-pois': 'pois', 'set-companies': 'companies', 'set-shields': 'shields', 'set-trail': 'trail', 'set-turns': 'turns', 'set-autozoom': 'autozoom', 'set-awake': 'awake' };
 for (const [id, key] of Object.entries(toggles)) {
   const el = $(id);
   el.checked = !!settings[key];
@@ -584,6 +655,7 @@ for (const [id, key] of Object.entries(toggles)) {
     saveSettings();
     applyTheme();
     if (key === 'awake') keepAwake();
+    updateHud();
     dirty = true;
   };
 }
@@ -643,7 +715,7 @@ function resize() {
 // Part of the screen not covered by the HUD, where edge arrows go.
 function computeInsets() {
   const rect = (id) => { const el = $(id); return el && !el.classList.contains('hidden') ? el.getBoundingClientRect() : null; };
-  const job = rect('job'), ctl = rect('controls'), spd = rect('speed'), info = rect('info');
+  const job = rect('job') || rect('turn') ? $('topleft').getBoundingClientRect() : null, ctl = rect('controls'), spd = rect('speed'), info = rect('info');
   const pad = 30;
   const ins = { left: pad, top: pad, right: pad, bottom: pad };
   if (ctl) ins.right = view.w - ctl.left + pad;
@@ -674,6 +746,7 @@ function frame(now) {
       dest: route.target ? [route.target.x, route.target.y] : state.dest,
       route: settings.route ? route : null,
       peers,
+      roadScale,
       source: state.source,
       opts: settings,
     });
@@ -757,7 +830,7 @@ function startOnline() {
         renderConvoy();
         updateBanner();
       },
-      onState: (id, name, d) => {
+      onState: (id, name, d, ts) => {
         if (!cfg.meId && cfg.name && name.toLowerCase() === cfg.name.toLowerCase()) {
           cfg.meId = id;
           saveOnline(cfg);
@@ -767,15 +840,15 @@ function startOnline() {
           if (cfg.name !== name) { cfg.name = name; saveOnline(cfg); convoy.info.name = name; }
           if (d?.offline) { state.meOffline = true; state.meWhy = d.why; state.status.connected = false; updateBanner(); return; }
           state.meOffline = false;
-          onTelemetry(d);
+          onTelemetry(d, ts);
         } else {
-          convoy.onPeer({ id, name, state: d });
-          scheduleConvoyRender();
+          onPeerState({ id, name, state: d, ts });
         }
       },
       onRoute: (id, d) => {
-        if (id === cfg.meId) { route.set(d); if (state.truck) route.update(state.truck.x, state.truck.y); updateHud(); }
+        if (id === cfg.meId) { route.set(d); if (state.truck) route.update(state.truck.x, state.truck.y); }
         else convoy.onRoute(id, d);
+        updateHud();
         dirty = true;
       },
       onLeave: (id) => {
@@ -863,7 +936,7 @@ function renderConvoy() {
   const me = state.truck;
   for (const p of convoy.all(performance.now())) {
     const li = document.createElement('li');
-    const dist = me && !p.offline ? Math.hypot(p.x - me.x, p.y - me.y) / 1000 : null;
+    const dist = me && !p.offline ? (Math.hypot(p.x - me.x, p.y - me.y) * roadScale) / 1000 : null;
     const s = p.last ?? {};
     // Trip, country to country: "Calais (France) → Berlin (Allemagne)".
     const where = (city, token) => {
@@ -897,6 +970,7 @@ function renderConvoy() {
         $('btn-recenter').classList.remove('hidden');
         updateRecenter();
         $('convoy-sheet').close();
+        updateHud();
         dirty = true;
       });
       const hidden = settings.hiddenRoutes.includes(p.id);

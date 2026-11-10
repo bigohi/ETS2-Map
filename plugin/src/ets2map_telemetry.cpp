@@ -27,7 +27,7 @@
 #include "common/scssdk_telemetry_common_channels.h"
 #include "common/scssdk_telemetry_truck_common_channels.h"
 
-#define PLUGIN_VERSION "1.0.0"
+#define PLUGIN_VERSION "1.1.0"
 #define DEFAULT_PORT 30210
 #define SEND_INTERVAL_MS 50       // 20 Hz while driving
 #define PAUSED_INTERVAL_MS 1000   // 1 Hz while paused / in menus
@@ -332,6 +332,128 @@ static void close_socket(void)
     }
 }
 
+// ---------------------------------------------------------------------------
+// ETS2 Map server, started with the game.
+//
+// ets2map_home.txt, next to this DLL, holds the ETS2 Map folder (written when
+// the plugin is installed). If nothing listens on the telemetry port yet, the
+// game starts the launcher found there, in its own minimized window, and the
+// window closes with the game. ETS2MAP_AUTOSTART=0 turns this off.
+
+static HANDLE g_server_job = NULL;
+
+static bool file_exists(const wchar_t *path)
+{
+    const DWORD attr = GetFileAttributesW(path);
+    return attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+// The server holds the telemetry port: binding it fails while it runs.
+static bool server_running(void)
+{
+    SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s == INVALID_SOCKET) return true; // cannot tell: never start a second one
+    const bool taken = bind(s, (const sockaddr *)&g_dest, sizeof(g_dest)) != 0;
+    closesocket(s);
+    return taken;
+}
+
+static bool read_home(wchar_t *home, size_t cap)
+{
+    HMODULE self = NULL;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&g_server_job, &self)) return false;
+    wchar_t path[1024];
+    const DWORD n = GetModuleFileNameW(self, path, 1000);
+    if (n == 0 || n >= 1000) return false;
+    wchar_t *slash = wcsrchr(path, L'\\');
+    if (!slash) return false;
+    wcscpy_s(slash + 1, 24, L"ets2map_home.txt");
+
+    HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    char utf8[2048];
+    DWORD got = 0;
+    const BOOL ok = ReadFile(f, utf8, sizeof(utf8) - 1, &got, NULL);
+    CloseHandle(f);
+    if (!ok || got == 0) return false;
+    utf8[got] = 0;
+    const char *start = utf8;
+    if (got >= 3 && (unsigned char)utf8[0] == 0xEF && (unsigned char)utf8[1] == 0xBB && (unsigned char)utf8[2] == 0xBF) start += 3;
+    size_t len = strcspn(start, "\r\n");
+    while (len > 0 && (start[len - 1] == ' ' || start[len - 1] == '\\' || start[len - 1] == '/')) len--;
+    if (len == 0) return false;
+    const int w = MultiByteToWideChar(CP_UTF8, 0, start, (int)len, home, (int)cap - 1);
+    if (w <= 0) return false;
+    home[w] = 0;
+    return true;
+}
+
+static void start_server(void)
+{
+    char env[8];
+    const DWORD len = GetEnvironmentVariableA("ETS2MAP_AUTOSTART", env, sizeof(env));
+    if (len == 1 && env[0] == '0') return;
+    if (server_running()) { log_msg(SCS_LOG_TYPE_message, "ETS2 Map is already running"); return; }
+
+    wchar_t home[600];
+    if (!read_home(home, 600)) { log_msg(SCS_LOG_TYPE_message, "no ets2map_home.txt next to the plugin: start ETS2 Map by hand"); return; }
+
+    // The launcher of the source folder, else the one of the friends' pack.
+    static const wchar_t *const launchers[] = { L"ETS2-Map.cmd", L"2 - Lancer ETS2 Map.cmd" };
+    wchar_t launcher[800] = L"";
+    for (size_t i = 0; i < 2 && !launcher[0]; ++i) {
+        _snwprintf_s(launcher, 800, _TRUNCATE, L"%s\\%s", home, launchers[i]);
+        if (!file_exists(launcher)) launcher[0] = 0;
+    }
+    if (!launcher[0]) { log_msg(SCS_LOG_TYPE_warning, "ETS2 Map launcher not found in the folder of ets2map_home.txt"); return; }
+
+    wchar_t comspec[300];
+    const DWORD cs = GetEnvironmentVariableW(L"ComSpec", comspec, 300);
+    if (cs == 0 || cs >= 300) wcscpy_s(comspec, 300, L"cmd.exe");
+    wchar_t cmdline[1400];
+    _snwprintf_s(cmdline, 1400, _TRUNCATE, L"\"%s\" /c \"\"%s\"\"", comspec, launcher);
+
+    // First launch asks for the nickname and the convoy code: show the window.
+    // Later ones stay minimized and leave the keyboard to the game.
+    wchar_t config[800];
+    _snwprintf_s(config, 800, _TRUNCATE, L"%s\\data\\config.json", home);
+    STARTUPINFOW si;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = (WORD)(file_exists(config) ? SW_SHOWMINNOACTIVE : SW_SHOWNORMAL);
+    PROCESS_INFORMATION pi;
+    memset(&pi, 0, sizeof(pi));
+    if (!CreateProcessW(NULL, cmdline, NULL, NULL, FALSE, CREATE_NEW_CONSOLE | CREATE_SUSPENDED, NULL, home, &si, &pi)) {
+        log_msg(SCS_LOG_TYPE_warning, "unable to start ETS2 Map (error %lu)", GetLastError());
+        return;
+    }
+    // A job that dies with the game: closing ETS2 closes the server window.
+    g_server_job = CreateJobObjectW(NULL, NULL);
+    if (g_server_job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
+        memset(&limits, 0, sizeof(limits));
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!SetInformationJobObject(g_server_job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) ||
+            !AssignProcessToJobObject(g_server_job, pi.hProcess)) {
+            CloseHandle(g_server_job);
+            g_server_job = NULL;
+        }
+    }
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    log_msg(SCS_LOG_TYPE_message, "ETS2 Map started with the game%s", g_server_job ? "" : " (it will stay open after the game)");
+}
+
+static void stop_server(void)
+{
+    if (g_server_job) {
+        CloseHandle(g_server_job); // kills what we started
+        g_server_job = NULL;
+    }
+}
+
 SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_telemetry_init_params_t *const params)
 {
     if (version != SCS_TELEMETRY_VERSION_1_01) return SCS_RESULT_unsupported;
@@ -386,12 +508,15 @@ SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_telemetry_in
         log_msg(SCS_LOG_TYPE_error, "unable to open UDP socket, telemetry disabled");
         close_socket();
         // Keep the game running normally; the plugin just stays silent.
+    } else {
+        start_server();
     }
     return SCS_RESULT_ok;
 }
 
 SCSAPI_VOID scs_telemetry_shutdown(void)
 {
+    stop_server();
     close_socket();
     g_log = NULL;
 }

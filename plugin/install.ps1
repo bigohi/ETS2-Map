@@ -23,8 +23,11 @@ if (-not $GameDir -or -not (Test-Path (Join-Path $GameDir 'base.scs'))) {
 }
 $plugins = Join-Path $GameDir 'bin\win_x64\plugins'
 $target = Join-Path $plugins 'ets2map_telemetry.dll'
+# Read by the plugin: where ETS2 Map is, to start it with the game.
+$homeFile = Join-Path $plugins 'ets2map_home.txt'
 
 if ($Uninstall) {
+  if (Test-Path $homeFile) { Remove-Item $homeFile -Force }
   if (Test-Path $target) { Remove-Item $target -Force; "Plugin supprimé : $target" } else { "Plugin absent, rien à faire." }
   return
 }
@@ -36,5 +39,7 @@ if (Get-Process eurotrucks2 -ErrorAction SilentlyContinue) {
 }
 New-Item -ItemType Directory -Force $plugins | Out-Null
 Copy-Item $dll $target -Force
+[IO.File]::WriteAllText($homeFile, $root)
 "Plugin installé : $target"
+"ETS2 Map se lance maintenant tout seul avec le jeu (fenêtre réduite) et se ferme avec lui."
 "Au prochain lancement, ETS2 affiche un message sur les fonctions SDK avancées : clique OK."

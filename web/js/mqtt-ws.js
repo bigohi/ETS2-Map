@@ -165,7 +165,7 @@ export class WebConvoy {
     if (kind === 'leave') { if (this.peers.delete(pid)) this.cb.onLeave?.(pid); return; }
     if (Date.now() - msg.ts > MAX_AGE_MS) return;
     this.peers.set(pid, Date.now());
-    if (kind === 'state') this.cb.onState?.(pid, String(msg.name ?? '?').slice(0, 32), msg.d);
+    if (kind === 'state') this.cb.onState?.(pid, String(msg.name ?? '?').slice(0, 32), msg.d, msg.ts);
     else if (kind === 'route') this.cb.onRoute?.(pid, msg.d);
   }
 

@@ -3,6 +3,7 @@
 // Usage: harness.exe [path\to\ets2map_telemetry.dll]
 
 #define WIN32_LEAN_AND_MEAN
+#define _CRT_SECURE_NO_WARNINGS
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -154,6 +155,68 @@ int main(int argc, char **argv)
     if (!pause_ok) failures++;
 
     shutdown();
+
+    // Started with the game: nothing listens on the port, ets2map_home.txt points
+    // to a folder with a launcher. It must run, then die with the game.
+    closesocket(rx);
+    {
+        char tmp[MAX_PATH], home[MAX_PATH], path[MAX_PATH * 2], full[MAX_PATH];
+        GetTempPathA(sizeof(tmp), tmp);
+        snprintf(home, sizeof(home), "%sets2map-harness-%lu", tmp, GetCurrentProcessId());
+        CreateDirectoryA(home, NULL);
+        snprintf(path, sizeof(path), "%s\\data", home);
+        CreateDirectoryA(path, NULL);
+        snprintf(path, sizeof(path), "%s\\data\\config.json", home);   // not a first launch: window minimized
+        FILE *f = fopen(path, "w"); if (f) { fputs("{}", f); fclose(f); }
+        snprintf(path, sizeof(path), "%s\\ETS2-Map.cmd", home);
+        f = fopen(path, "w");
+        if (f) { fputs("@echo off\r\n:loop\r\necho x>>\"%~dp0beat.txt\"\r\nping -n 2 127.0.0.1 >nul\r\ngoto loop\r\n", f); fclose(f); }
+        char beat[MAX_PATH * 2];
+        snprintf(beat, sizeof(beat), "%s\\beat.txt", home);
+        auto beats = [&]() -> long {
+            WIN32_FILE_ATTRIBUTE_DATA d;
+            return GetFileAttributesExA(beat, GetFileExInfoStandard, &d) ? (long)d.nFileSizeLow : -1;
+        };
+
+        GetFullPathNameA(dll, sizeof(full), full, NULL);
+        char *slash = strrchr(full, '\\');
+        std::string home_file = std::string(full, slash ? slash + 1 - full : 0) + "ets2map_home.txt";
+        f = fopen(home_file.c_str(), "w"); if (f) { fprintf(f, "%s\\\r\n", home); fclose(f); }
+
+        r = init(SCS_TELEMETRY_VERSION_1_01, &params);
+        long first = -1;
+        for (int i = 0; i < 50 && first < 0; ++i) { Sleep(100); first = beats(); }
+        printf("%s launcher started with the game\n", first >= 0 ? "OK  " : "FAIL");
+        if (first < 0) failures++;
+        Sleep(2500);
+        const long running = beats();
+        printf("%s launcher keeps running (%ld -> %ld bytes)\n", running > first ? "OK  " : "FAIL", first, running);
+        if (!(running > first)) failures++;
+
+        shutdown();
+        Sleep(500);
+        const long stopped = beats();
+        Sleep(3000);
+        const long later = beats();
+        printf("%s launcher closed with the game (%ld -> %ld bytes)\n", later == stopped ? "OK  " : "FAIL", stopped, later);
+        if (later != stopped) failures++;
+
+        // Off on request.
+        DeleteFileA(beat);
+        SetEnvironmentVariableA("ETS2MAP_AUTOSTART", "0");
+        r = init(SCS_TELEMETRY_VERSION_1_01, &params);
+        Sleep(1500);
+        printf("%s ETS2MAP_AUTOSTART=0 starts nothing\n", beats() < 0 ? "OK  " : "FAIL");
+        if (beats() >= 0) failures++;
+        shutdown();
+
+        DeleteFileA(home_file.c_str());
+        DeleteFileA(beat);
+        snprintf(path, sizeof(path), "%s\\ETS2-Map.cmd", home); DeleteFileA(path);
+        snprintf(path, sizeof(path), "%s\\data\\config.json", home); DeleteFileA(path);
+        snprintf(path, sizeof(path), "%s\\data", home); RemoveDirectoryA(path);
+        RemoveDirectoryA(home);
+    }
     FreeLibrary(h);
     printf(failures ? "\n%d FAILURE(S)\n" : "\nALL CHECKS PASSED\n", failures);
     return failures ? 1 : 0;

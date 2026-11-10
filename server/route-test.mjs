@@ -25,6 +25,14 @@ for (const key of ['paris/fle', 'lyon/', 'berlin/', 'milano/', 'madrid/', 'warsz
   const res = r.route(ax + (bx - ax) * 0.5, ay + (by - ay) * 0.5, heading, target);
   if (!res) { console.log(`FAIL Calais -> ${city}/${companyKey}`); fails++; continue; }
   const straight = Math.hypot(target.x - cx, target.y - cy) / 1000;
-  console.log(`OK   Calais -> ${city}/${companyKey}: ${(res.distance / 1000).toFixed(1)} km (straight ${straight.toFixed(1)}), ${(res.duration / 60).toFixed(0)} min, ${res.points.length} pts, ${res.ms} ms, ${res.iters} iters`);
+  console.log(`OK   Calais -> ${city}/${companyKey}: ${(res.distance / 1000).toFixed(1)} km (straight ${straight.toFixed(1)}), ${(res.duration / 60).toFixed(0)} min, ${res.points.length} pts, ${res.ms} ms, ${res.iters} iters, ${res.turns.length} manoeuvres`);
+  // Maneuvers sit on the route, in order, and are not one per junction.
+  const bad = res.turns.some(([i, code], k) => !(i > 0 && i < res.points.length && code >= 1 && code <= 7) || (k && i < res.turns[k - 1][0]));
+  if (bad || !res.turns.length || res.turns.length > res.distance / 150) { console.log(`FAIL manoeuvres ${city}: ${res.turns.length}`); fails++; }
+  if (process.argv.includes('--turns')) {
+    const names = { 1: 'gauche', 2: 'droite', 3: 'serrer gauche', 4: 'serrer droite', 5: 'ferry', 7: 'milieu' };
+    let d = 0, at = 0;
+    console.log(res.turns.map(([i, code]) => { for (; at < i; at++) d += Math.hypot(res.points[at + 1][0] - res.points[at][0], res.points[at + 1][1] - res.points[at][1]); return `${(d / 1000).toFixed(2)} ${names[code]}`; }).join(' | '));
+  }
 }
 process.exit(fails ? 1 : 0);

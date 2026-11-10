@@ -89,7 +89,7 @@ export class ConvoyHub {
       } else if (!!this.peers.get(id).state?.offline !== !!state?.offline) {
         console.log(`[convoi] ${meta?.name ?? '?'} ${state?.offline ? 'a quitté la route' : 'est en jeu'}`);
       }
-      const p = { id, name: meta?.name ?? state?.name ?? '?', state, at: Date.now() };
+      const p = { id, name: meta?.name ?? state?.name ?? '?', state, at: Date.now(), ts: meta?.ts };
       this.peers.set(id, p);
       this.broadcast('peer', JSON.stringify(p));
     });

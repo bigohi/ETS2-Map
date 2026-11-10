@@ -7,6 +7,19 @@ import { execFile } from 'node:child_process';
 import { findGameDir } from '../tools/game-dir.mjs';
 
 const DLL = 'ets2map_telemetry.dll';
+// Read by the plugin: the folder of ETS2 Map, to start it with the game.
+const HOME = 'ets2map_home.txt';
+
+/** Tells the plugin where ETS2 Map is (the folder that holds plugin/build/<dll>). */
+function writeHome(dllSource, pluginsDir) {
+  const root = path.resolve(path.dirname(dllSource), '..', '..');
+  const file = path.join(pluginsDir, HOME);
+  try {
+    if (fs.existsSync(file) && fs.readFileSync(file, 'utf8').trim() === root) return;
+    fs.mkdirSync(pluginsDir, { recursive: true });
+    fs.writeFileSync(file, root);
+  } catch { /* game folder not writable: the game just will not start ETS2 Map */ }
+}
 
 function ps(command) {
   return new Promise((resolve) => {
@@ -40,6 +53,7 @@ export async function ensurePlugin(dllSource) {
   const { gameDir } = await locate();
   if (!gameDir) return { result: 'no-game' };
   const target = path.join(gameDir, 'bin', 'win_x64', 'plugins', DLL);
+  writeHome(dllSource, path.dirname(target));
   if (sameFile(dllSource, target)) return { result: 'ok', target };
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });

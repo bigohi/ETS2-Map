@@ -7,6 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const CELL = 200; // spatial index cell (meters)
+/** Maneuver codes sent with a route (web/js/route.js shows them). */
+export const TURN = { LEFT: 1, RIGHT: 2, KEEP_LEFT: 3, KEEP_RIGHT: 4, FERRY: 5, MIDDLE: 7 };
 const cellKey = (cx, cy) => (cx + 4096) * 8192 + (cy + 4096);
 
 export class Router {
@@ -136,6 +138,68 @@ export class Router {
 
   nodeXYm(n) { return [this.nodeXY[n * 2] / this.q, this.nodeXY[n * 2 + 1] / this.q]; }
 
+  /**
+   * Unit directions of an edge: `chord` from its start to the point `reach`
+   * meters along it, `tangent` the way it points there. With fromEnd, the same
+   * over its last `reach` meters, pointing forward. null without a shape.
+   */
+  edgeDir(e, reach, fromEnd = false) {
+    const a = this.geomOff[e], b = this.geomOff[e + 1] - 1;
+    if (b <= a) return null;
+    const P = this.pts, q = this.q, sign = fromEnd ? -1 : 1;
+    const ox = P[(fromEnd ? b : a) * 2], oy = P[(fromEnd ? b : a) * 2 + 1];
+    let x = ox, y = oy, len = 0, tx = 0, ty = 0;
+    for (let p = fromEnd ? b - 1 : a + 1; fromEnd ? p >= a : p <= b; p += sign) {
+      const nx = P[p * 2], ny = P[p * 2 + 1], l = Math.hypot(nx - x, ny - y);
+      if (l > 0) { tx = (nx - x) / l; ty = (ny - y) / l; }
+      len += l / q;
+      x = nx; y = ny;
+      if (len >= reach) break;
+    }
+    const dx = x - ox, dy = y - oy, l = Math.hypot(dx, dy);
+    return l > 1e-6 ? { chord: [sign * dx / l, sign * dy / l], tangent: [sign * tx, sign * ty] } : null;
+  }
+
+  /**
+   * What the driver has to do when the route goes from edge `prev` into edge
+   * `e`: 0 nothing, else a TURN code. Only where the road offers another way
+   * (the other ways out of the same node), and not for staying on the road
+   * that goes straight on.
+   */
+  turnAt(prev, e) {
+    if (this.edgeFlags[e] & 1) return this.edgeFlags[prev] & 1 ? 0 : TURN.FERRY;
+    const s = this.edgeFrom[e];
+    if (this.stateOff[s + 1] - this.stateOff[s] < 2) return 0;
+    const inDir = this.edgeDir(prev, 15, true)?.chord, out = this.edgeDir(e, 45);
+    if (!inDir || !out) return 0;
+    // Signed turn in degrees, positive = to the right (y grows to the south).
+    const turn = (d) => Math.atan2(inDir[0] * d[1] - inDir[1] * d[0], inDir[0] * d[0] + inDir[1] * d[1]) * 180 / Math.PI;
+    const dc = turn(out.chord);
+    let others = 0, left = 0, right = 0, straighter = false;
+    for (let o = this.stateOff[s]; o < this.stateOff[s + 1]; o++) {
+      if (o === e || this.edgeFlags[o] & 1 || this.edgeTo[o] === this.edgeTo[e]) continue;
+      const d = this.edgeDir(o, 45);
+      if (!d) continue;
+      const da = turn(d.chord);
+      if (Math.abs(da) > 150) continue; // a way back, not a choice
+      others++;
+      // A fork: another way that leaves almost in the same direction as ours.
+      if (Math.abs(da) < 75 && Math.abs(da - dc) < 60) {
+        if (da < dc) left++; else right++;
+        if (Math.abs(da) < Math.abs(dc) + 4) straighter = true;
+      }
+    }
+    if (!others) return 0;
+    // A real turn: the road ends up pointing somewhere else.
+    if (Math.abs(dc) >= 40 || Math.abs(turn(out.tangent)) >= 65) return dc < 0 ? TURN.LEFT : TURN.RIGHT;
+    // Passing an exit on the road that goes straight on: nothing to say.
+    if (!straighter) return 0;
+    if (left && right) return TURN.MIDDLE;
+    if (right) return TURN.KEEP_LEFT;   // the other way is on our right
+    if (left) return TURN.KEEP_RIGHT;
+    return 0;
+  }
+
   /** Graph nodes a job goes to: the company's node(s), else nearest road to the city. */
   jobTargets(cityToken, companyToken, cityPos) {
     const list = this.companies[`${cityToken}/${companyToken}`];
@@ -228,7 +292,18 @@ export class Router {
       if (!points.length) points.push(this.nodeXYm(s0 >> 1));
     }
     let duration = g[found];
+    // Maneuvers: [index in points, TURN code], where the route leaves a node
+    // that has another way out.
+    const turns = [];
+    let prev = e0;
     for (const e of path) {
+      const code = this.turnAt(prev, e);
+      prev = e;
+      if (code) {
+        const at = points.length - 1, last = turns[turns.length - 1];
+        // Same order twice in a row (lanes of one junction): once is enough.
+        if (!(last && last[1] === code && distBetween(points, last[0], at) < 60)) turns.push([at, code]);
+      }
       for (let p = this.geomOff[e]; p < this.geomOff[e + 1]; p++) {
         const pt = [this.pts[p * 2] / q, this.pts[p * 2 + 1] / q];
         const last = points[points.length - 1];
@@ -239,8 +314,14 @@ export class Router {
     }
     let distance = 0;
     for (let i = 1; i < points.length; i++) distance += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
-    return { points, distance, duration, edges: path.length, ms: Math.round(performance.now() - t0), iters };
+    return { points, turns, distance, duration, edges: path.length, ms: Math.round(performance.now() - t0), iters };
   }
+}
+
+function distBetween(points, a, b) {
+  let d = 0;
+  for (let i = a + 1; i <= b; i++) d += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+  return d;
 }
 
 /** Binary min-heap of (priority, value) pairs. */
@@ -352,11 +433,14 @@ export class RouteManager {
       this.publish(null);
       return;
     }
-    const pts = simplifyPts(r.points, 1.5);
+    // Maneuver points survive the simplification; their indices follow.
+    const index = new Int32Array(r.points.length);
+    const pts = simplifyPts(r.points, 1.5, r.turns.map((m) => m[0]), index);
+    const turns = r.turns.map(([i, code]) => [index[i], code]);
     const cum = [0];
     for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
     this.progress = 0;
-    this.current = { id: ++this.seq, points: pts, cum, distance: r.distance, duration: r.duration, target: { x: target.x, y: target.y, label: target.label }, reason, ms: r.ms };
+    this.current = { id: ++this.seq, points: pts, turns, cum, distance: r.distance, duration: r.duration, target: { x: target.x, y: target.y, label: target.label }, reason, ms: r.ms };
     console.log(`[route] ${reason}: ${(r.distance / 1000).toFixed(1)} km, ${pts.length} pts, ${r.ms} ms -> ${target.label ?? ''}`);
     this.publish(this.current);
   }
@@ -381,11 +465,14 @@ export class RouteManager {
   }
 }
 
-function simplifyPts(points, tol) {
-  if (points.length <= 2) return points;
+/** Douglas-Peucker. `must`: indices kept anyway; `index`: filled with old index -> new index. */
+export function simplifyPts(points, tol, must = [], index = null) {
   const keep = new Uint8Array(points.length);
   keep[0] = keep[points.length - 1] = 1;
-  const stack = [[0, points.length - 1]];
+  for (const i of must) keep[i] = 1;
+  // Each stretch between two forced points is simplified on its own.
+  const stack = [];
+  for (let i = 1, a = 0; i < points.length; i++) if (keep[i]) { stack.push([a, i]); a = i; }
   const sq = tol * tol;
   while (stack.length) {
     const [a, b] = stack.pop();
@@ -400,6 +487,7 @@ function simplifyPts(points, tol) {
     }
     if (maxD > sq) { keep[idx] = 1; stack.push([a, idx], [idx, b]); }
   }
+  if (index) for (let i = 0, n = 0; i < points.length; i++) { index[i] = n; if (keep[i]) n++; }
   return points.filter((_, i) => keep[i]);
 }
 
@@ -412,5 +500,6 @@ export function encodeRoute(r) {
     if (i === 0) enc.push(qx, qy); else enc.push(qx - px, qy - py);
     px = qx; py = qy;
   });
-  return { id: r.id, pts: enc, distance: Math.round(r.distance), duration: Math.round(r.duration), target: r.target, reason: r.reason };
+  // man: maneuvers, flat [point index, TURN code, ...].
+  return { id: r.id, pts: enc, man: (r.turns ?? []).flat(), distance: Math.round(r.distance), duration: Math.round(r.duration), target: r.target, reason: r.reason };
 }

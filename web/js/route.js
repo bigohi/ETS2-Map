@@ -21,7 +21,10 @@ export class RouteView {
       ys[i] = y / 10;
       if (i) cum[i] = cum[i - 1] + Math.hypot(xs[i] - xs[i - 1], ys[i] - ys[i - 1]);
     }
-    this.r = { ...msg, xs, ys, cum, n, progress: 0, projX: xs[0], projY: ys[0], projT: 0, cached: null, cachedAt: -1 };
+    // Maneuvers from the server: [point index, code, ...] (codes: TURNS in app.js).
+    const man = Array.isArray(msg.man) ? [] : null;
+    for (let i = 0; man && i + 1 < msg.man.length; i += 2) if (msg.man[i] > 0 && msg.man[i] < n) man.push({ i: msg.man[i], code: msg.man[i + 1] });
+    this.r = { ...msg, man, xs, ys, cum, n, progress: 0, projX: xs[0], projY: ys[0], projT: 0, cached: null, cachedAt: -1 };
   }
 
   get active() { return !!this.r; }
@@ -48,12 +51,18 @@ export class RouteView {
     }
   }
 
-  /** Meters left along the route. */
-  remaining() {
+  /** Meters driven along the route so far. */
+  traveled() {
     const r = this.r;
     if (!r) return 0;
     const segLen = r.progress < r.n - 1 ? r.cum[r.progress + 1] - r.cum[r.progress] : 0;
-    return Math.max(0, r.cum[r.n - 1] - r.cum[r.progress] - segLen * r.projT);
+    return r.cum[r.progress] + segLen * r.projT;
+  }
+
+  /** Meters left along the route. */
+  remaining() {
+    const r = this.r;
+    return r ? Math.max(0, r.cum[r.n - 1] - this.traveled()) : 0;
   }
 
   /** Estimated seconds left, scaled from the server's estimate. */
@@ -63,22 +72,50 @@ export class RouteView {
     return r.duration * (this.remaining() / r.cum[r.n - 1]);
   }
 
-  /** Path2D (quantized units) of what is left, from the truck's projection. */
-  path(q) {
+  /**
+   * The next maneuvers ahead: [{ code, dist (meters) }], the arrival (code 6)
+   * last. null when the route came without maneuvers (older ETS2 Map).
+   */
+  maneuvers(count = 2) {
+    const r = this.r;
+    if (!r?.man) return null;
+    const at = this.traveled(), out = [];
+    for (const m of r.man) {
+      if (m.i <= r.progress) continue;
+      out.push({ code: m.code, dist: Math.max(0, r.cum[m.i] - at) });
+      if (out.length === count) return out;
+    }
+    out.push({ code: 6, dist: this.remaining() });
+    return out;
+  }
+
+  /**
+   * What is left of the route inside the world box [x0, y0, x1, y1], from the
+   * truck's projection: { path (Path2D, quantized units), start (quantized
+   * units along the route where the path begins, to anchor dashes) }.
+   * Points closer than `tol` meters to the last drawn one are skipped.
+   */
+  path(q, box, tol = 0) {
     const r = this.r;
     if (!r) return null;
-    if (r.cachedAt !== r.progress || r.cachedQ !== q) {
-      const p = new Path2D();
-      p.moveTo(r.xs[r.progress + 1 < r.n ? r.progress + 1 : r.progress] * q, r.ys[r.progress + 1 < r.n ? r.progress + 1 : r.progress] * q);
-      for (let i = r.progress + 2; i < r.n; i++) p.lineTo(r.xs[i] * q, r.ys[i] * q);
-      r.cached = p;
-      r.cachedAt = r.progress;
-      r.cachedQ = q;
+    const [x0, y0, x1, y1] = box;
+    const path = new Path2D();
+    let px = r.projX, py = r.projY, pen = false, lx = 0, ly = 0, start = null;
+    for (let i = r.progress + 1; i < r.n; i++) {
+      const x = r.xs[i], y = r.ys[i];
+      if ((px > x ? px : x) >= x0 && (px < x ? px : x) <= x1 && (py > y ? py : y) >= y0 && (py < y ? py : y) <= y1) {
+        if (!pen) {
+          path.moveTo(px * q, py * q);
+          pen = true; lx = px; ly = py;
+          start ??= i - 1 === r.progress ? this.traveled() : r.cum[i - 1];
+        }
+        if (i === r.n - 1 || Math.abs(x - lx) > tol || Math.abs(y - ly) > tol) { path.lineTo(x * q, y * q); lx = x; ly = y; }
+      } else {
+        if (pen && (lx !== px || ly !== py)) path.lineTo(px * q, py * q); // close the skipped tail
+        pen = false;
+      }
+      px = x; py = y;
     }
-    // Head segment from the truck's projection, rebuilt each frame.
-    const head = new Path2D();
-    head.moveTo(r.projX * q, r.projY * q);
-    if (r.progress + 1 < r.n) head.lineTo(r.xs[r.progress + 1] * q, r.ys[r.progress + 1] * q);
-    return [head, r.cached];
+    return { path, start: (start ?? 0) * q };
   }
 }
