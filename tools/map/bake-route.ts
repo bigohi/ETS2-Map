@@ -39,6 +39,13 @@ function allowedGuards(): Set<number> | null {
   }
   const guards = toEts2DlcGuards(owned as never);
   guards.add(0);
+  // Iceland: guards the pinned TruckSim Maps does not know yet.
+  // 26 = Iceland, 27 = Iceland + Nordic Horizons (the port of Ålesund).
+  const has = (f: string) => fs.existsSync(path.join(gameDir, f));
+  if (has('dlc_iceland.scs')) {
+    guards.add(26 as never);
+    if (has('dlc_polar.scs') || has('dlc_polar_circle.scs')) guards.add(27 as never);
+  }
   return guards;
 }
 
@@ -71,6 +78,27 @@ function main() {
   const data = readMapData(parsedDir, 'europe', {
     mapDataKeys: [...graphMapDataKeys, 'companyDefs'],
   }) as any;
+
+  // The graph generator drops what carries a guard it does not know: give the
+  // Iceland pieces a guard it knows when they are owned, remove them otherwise.
+  const KNOWN: Record<number, number> = { 26: 0, 27: 23 };
+  for (const coll of [data.roads, data.prefabs] as Map<bigint, any>[]) {
+    for (const [uid, item] of coll) {
+      const known = KNOWN[item.dlcGuard];
+      if (known == null) continue;
+      if (!guards || guards.has(item.dlcGuard)) item.dlcGuard = known;
+      else coll.delete(uid);
+    }
+  }
+  // A ferry port whose prefab is gone cannot be reached: drop it and the lines to it.
+  const lostPorts = new Set<bigint>();
+  for (const [uid, f] of data.ferries as Map<bigint, any>) {
+    if (f.prefabUid == null || !data.prefabs.has(f.prefabUid)) { lostPorts.add(f.nodeUid); data.ferries.delete(uid); }
+  }
+  if (lostPorts.size) {
+    for (const f of data.ferries.values()) f.connections = f.connections.filter((c: any) => !lostPorts.has(c.nodeUid));
+    log(`${lostPorts.size} ferry ports without a prefab dropped`);
+  }
 
   log('generating road graph (TruckSim Maps)...');
   const { graph } = generateGraph(data);

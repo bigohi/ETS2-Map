@@ -20,7 +20,9 @@ const HEAP = '--max-old-space-size=16384';
 
 function run(cmd, args, opts = {}) {
   console.log(`> ${cmd} ${args.join(' ')}`);
-  const r = spawnSync(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32' && !cmd.endsWith('.exe') && cmd !== process.execPath, ...opts });
+  // tsx runs the script in a child process: the heap limit has to travel in the environment.
+  const env = { ...process.env, NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ''} ${HEAP}`.trim() };
+  const r = spawnSync(cmd, args, { stdio: 'inherit', env, shell: process.platform === 'win32' && !cmd.endsWith('.exe') && cmd !== process.execPath, ...opts });
   if (r.status !== 0) {
     console.error(`failed: ${cmd} (${r.status})`);
     process.exit(r.status ?? 1);

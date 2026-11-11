@@ -71,6 +71,13 @@ function allowedDlcGuards(): Set<number> | null {
   }
   const guards = toEts2DlcGuards(owned as never);
   guards.add(0);
+  // Iceland: guards the pinned TruckSim Maps does not know yet.
+  // 26 = Iceland, 27 = Iceland + Nordic Horizons (the port of Ålesund).
+  const has = (f: string) => fs.existsSync(path.join(gameDir, f));
+  if (has('dlc_iceland.scs')) {
+    guards.add(26 as never);
+    if (has('dlc_polar.scs') || has('dlc_polar_circle.scs')) guards.add(27 as never);
+  }
   log(`owned map DLC guards: ${[...guards].sort((a, b) => a - b).join(',')}`);
   return guards;
 }

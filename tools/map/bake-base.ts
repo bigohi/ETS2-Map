@@ -72,8 +72,12 @@ function controlPoints(meta: any) {
 }
 
 function makeProjector(cps: { x: number; y: number; dx: number; dy: number }[]) {
-  return (lon: number, lat: number): Pt => {
-    const [x, y] = fromWgs84ToEts2Coords([lon, lat]);
+  const local = makeResidual(cps);
+  return (lon: number, lat: number): Pt => local(...(fromWgs84ToEts2Coords([lon, lat]) as Pt));
+}
+
+function makeResidual(cps: { x: number; y: number; dx: number; dy: number }[]) {
+  return (x: number, y: number): Pt => {
     let sw = 0, sx = 0, sy = 0;
     for (const c of cps) {
       const d2 = (c.x - x) ** 2 + (c.y - y) ** 2 + 4e6; // 2 km softening
@@ -82,6 +86,43 @@ function makeProjector(cps: { x: number; y: number; dx: number; dy: number }[]) 
     }
     return [x + sx / sw, y + sy / sw];
   };
+}
+
+// Iceland is not where the projection puts it: the game moves it closer to
+// Europe and draws it at its own scale. Its outline gets an affine transform
+// fitted on its own cities, then the same local correction as the mainland.
+const ICELAND = [-25.5, 62.8, -12.5, 67.2]; // lon, lat
+const inIceland = (lon: number, lat: number) => lon >= ICELAND[0] && lon <= ICELAND[2] && lat >= ICELAND[1] && lat <= ICELAND[3];
+
+function icelandProjector(meta: any): ((lon: number, lat: number) => Pt) | null {
+  const places = (JSON.parse(fs.readFileSync(PLACES, 'utf8')).features as any[])
+    .filter((f) => inIceland(f.properties.longitude, f.properties.latitude));
+  const pairs: { px: number; py: number; gx: number; gy: number }[] = [];
+  for (const [name, gx, gy] of meta.cities as [string, number, number][]) {
+    if (meta.cityCountry?.[Object.keys(meta.cityNames ?? {}).find((t) => meta.cityNames[t] === name) ?? ''] !== 'iceland') continue;
+    const f = places.find((c) => [c.properties.name, c.properties.nameascii, c.properties.namealt].filter(Boolean).some((n: string) => norm(n) === norm(name)));
+    if (!f) continue;
+    const [px, py] = fromWgs84ToEts2Coords([f.properties.longitude, f.properties.latitude]);
+    pairs.push({ px, py, gx, gy });
+  }
+  if (pairs.length < 3) return null;
+  // Least squares for g = a*px + b*py + c, on centered points, x and y apart.
+  const n = pairs.length;
+  const mx = pairs.reduce((t, c) => t + c.px, 0) / n, my = pairs.reduce((t, c) => t + c.py, 0) / n;
+  let sxx = 0, sxy = 0, syy = 0;
+  for (const c of pairs) { const u = c.px - mx, v = c.py - my; sxx += u * u; sxy += u * v; syy += v * v; }
+  const det = sxx * syy - sxy * sxy;
+  if (Math.abs(det) < 1e-6) return null;
+  const fit = (get: (c: typeof pairs[0]) => number) => {
+    let su = 0, sv = 0, sg = 0;
+    for (const c of pairs) { const u = c.px - mx, v = c.py - my, g = get(c); su += u * g; sv += v * g; sg += g; }
+    return { a: (su * syy - sv * sxy) / det, b: (sv * sxx - su * sxy) / det, c: sg / n };
+  };
+  const fx = fit((c) => c.gx), fy = fit((c) => c.gy);
+  const affine = (x: number, y: number): Pt => [fx.a * (x - mx) + fx.b * (y - my) + fx.c, fy.a * (x - mx) + fy.b * (y - my) + fy.c];
+  const local = makeResidual(pairs.map((c) => { const [x, y] = affine(c.px, c.py); return { x, y, dx: c.gx - x, dy: c.gy - y }; }));
+  log(`Iceland: ${n} cities, scale ${Math.hypot(fx.a, fy.a).toFixed(2)}`);
+  return (lon, lat) => { const [x, y] = fromWgs84ToEts2Coords([lon, lat]); return local(...affine(x, y)); };
 }
 
 // --- geometry ---------------------------------------------------------------
@@ -179,7 +220,9 @@ async function main() {
   const q = meta.q;
   const cps = controlPoints(meta);
   log(`${cps.length} cities used to fit the projection to the game map`);
-  const project = makeProjector(cps);
+  const mainland = makeProjector(cps);
+  const iceland = icelandProjector(meta);
+  const project = (lon: number, lat: number): Pt => (iceland && inIceland(lon, lat) ? iceland(lon, lat) : mainland(lon, lat));
 
   const [bx0, by0, bx1, by1] = meta.bounds;
   const margin = 25000;

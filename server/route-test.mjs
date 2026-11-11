@@ -17,7 +17,7 @@ const g0 = r.geomOff[s.edge];
 const ax = r.pts[g0 * 2] / r.q, ay = r.pts[g0 * 2 + 1] / r.q, bx = r.pts[g0 * 2 + 2] / r.q, by = r.pts[g0 * 2 + 3] / r.q;
 const heading = ((Math.atan2(-(bx - ax), -(by - ay)) / (Math.PI * 2)) + 1) % 1;
 let fails = 0;
-for (const key of ['paris/fle', 'lyon/', 'berlin/', 'milano/', 'madrid/', 'warszawa/', 'oslo/', 'istanbul/', 'aberdeen/', 'athens/']) {
+for (const key of ['paris/fle', 'lyon/', 'berlin/', 'milano/', 'madrid/', 'warszawa/', 'oslo/', 'istanbul/', 'aberdeen/', 'athens/', 'reykjavik/', 'akureyri/']) {
   const [city, co] = key.split('/');
   const companyKey = co || Object.keys(r.companies).find((k) => k.startsWith(city + '/'))?.split('/')[1];
   const target = companyKey ? r.jobTargets(city, companyKey, meta.cityPos[city]) : null;
